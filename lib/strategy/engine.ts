@@ -427,10 +427,7 @@ export function analyze(
   }
 
   const spike =
-    detectSpike(
-      candles,
-      config
-    );
+  detectSpike(candles);
 
   result.setup.spike =
     spike;
