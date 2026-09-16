@@ -1,281 +1,403 @@
-import {
-  CONFIG,
-} from './config';
+import { CONFIG } from './config';
+import { Candle, Structure, MarketState } from './types';
 
-import {
-  Candle,
-  Structure,
-} from './types';
 
-function findRecentHigh(
+interface SwingPoint {
+  index: number;
+  price: number;
+  type: 'HIGH' | 'LOW';
+}
+
+
+function isSwingHigh(
   candles: Candle[],
+  index: number,
   strength: number
-): number | null {
-  for (
-    let i =
-      candles.length -
-      strength -
-      1;
+): boolean {
+  const current = candles[index];
 
-    i >= strength;
-
-    i -= 1
-  ) {
-    const high =
-      candles[i].high;
-
-    let valid = true;
-
-    for (
-      let k = 1;
-      k <= strength;
-      k += 1
+  for (let i = 1; i <= strength; i++) {
+    if (
+      current.high <= candles[index - i].high ||
+      current.high < candles[index + i].high
     ) {
-      if (
-        high <=
-          candles[
-            i - k
-          ].high ||
-        high <=
-          candles[
-            i + k
-          ].high
-      ) {
-        valid = false;
-
-        break;
-      }
-    }
-
-    if (valid) {
-      return high;
+      return false;
     }
   }
 
-  return null;
+  return true;
 }
 
-function findRecentLow(
+
+function isSwingLow(
   candles: Candle[],
+  index: number,
   strength: number
-): number | null {
-  for (
-    let i =
-      candles.length -
-      strength -
-      1;
+): boolean {
+  const current = candles[index];
 
-    i >= strength;
-
-    i -= 1
-  ) {
-    const low =
-      candles[i].low;
-
-    let valid = true;
-
-    for (
-      let k = 1;
-      k <= strength;
-      k += 1
+  for (let i = 1; i <= strength; i++) {
+    if (
+      current.low >= candles[index - i].low ||
+      current.low > candles[index + i].low
     ) {
-      if (
-        low >=
-          candles[
-            i - k
-          ].low ||
-        low >=
-          candles[
-            i + k
-          ].low
-      ) {
-        valid = false;
-
-        break;
-      }
-    }
-
-    if (valid) {
-      return low;
+      return false;
     }
   }
 
-  return null;
+  return true;
 }
+
+
+function detectSwings(
+  candles: Candle[]
+): SwingPoint[] {
+  const strength =
+    CONFIG.swingStrength;
+
+  const swings: SwingPoint[] = [];
+
+  for (
+    let i = strength;
+    i < candles.length - strength;
+    i++
+  ) {
+    if (
+      isSwingHigh(
+        candles,
+        i,
+        strength
+      )
+    ) {
+      swings.push({
+        index: i,
+        price: candles[i].high,
+        type: 'HIGH',
+      });
+    }
+
+    if (
+      isSwingLow(
+        candles,
+        i,
+        strength
+      )
+    ) {
+      swings.push({
+        index: i,
+        price: candles[i].low,
+        type: 'LOW',
+      });
+    }
+  }
+
+  return swings.sort(
+    (a, b) =>
+      a.index - b.index
+  );
+}
+
+
+function getRecentSwings(
+  swings: SwingPoint[],
+  candlesLength: number
+): SwingPoint[] {
+  const lookback =
+    CONFIG.structureLookback;
+
+  const minimumIndex =
+    Math.max(
+      0,
+      candlesLength - lookback
+    );
+
+  return swings.filter(
+    swing =>
+      swing.index >=
+      minimumIndex
+  );
+}
+
+
+function getLastTwo(
+  swings: SwingPoint[],
+  type: 'HIGH' | 'LOW'
+): SwingPoint[] {
+  return swings
+    .filter(
+      swing =>
+        swing.type === type
+    )
+    .slice(-2);
+}
+
+
+function detectMarketState(
+  highs: SwingPoint[],
+  lows: SwingPoint[],
+  currentClose: number
+): MarketState {
+  if (
+    highs.length < 2 ||
+    lows.length < 2
+  ) {
+    return 'UNCLEAR';
+  }
+
+  const previousHigh =
+    highs[highs.length - 2];
+
+  const latestHigh =
+    highs[highs.length - 1];
+
+  const previousLow =
+    lows[lows.length - 2];
+
+  const latestLow =
+    lows[lows.length - 1];
+
+
+  const higherHigh =
+    latestHigh.price >
+    previousHigh.price;
+
+  const higherLow =
+    latestLow.price >
+    previousLow.price;
+
+  const lowerHigh =
+    latestHigh.price <
+    previousHigh.price;
+
+  const lowerLow =
+    latestLow.price <
+    previousLow.price;
+
+
+  if (
+    higherHigh &&
+    higherLow
+  ) {
+    return 'UPTREND';
+  }
+
+
+  if (
+    lowerHigh &&
+    lowerLow
+  ) {
+    return 'DOWNTREND';
+  }
+
+
+  /*
+   * اگر ساختار کاملاً روندی نیست،
+   * در صورتی که قیمت بین آخرین Swing High
+   * و Swing Low قرار داشته باشد، بازار را Range
+   * در نظر می‌گیریم.
+   */
+
+  const rangeHigh =
+    latestHigh.price;
+
+  const rangeLow =
+    latestLow.price;
+
+  const rangeSize =
+    rangeHigh -
+    rangeLow;
+
+
+  if (
+    rangeSize > 0 &&
+    currentClose <= rangeHigh &&
+    currentClose >= rangeLow
+  ) {
+    return 'RANGE';
+  }
+
+
+  return 'UNCLEAR';
+}
+
+
+function detectBreakout(
+  candles: Candle[],
+  highs: SwingPoint[],
+  lows: SwingPoint[]
+):
+  | 'BULLISH'
+  | 'BEARISH'
+  | 'NONE' {
+
+  if (
+    candles.length === 0
+  ) {
+    return 'NONE';
+  }
+
+  const lastCandle =
+    candles[candles.length - 1];
+
+  const latestHigh =
+    highs[highs.length - 1];
+
+  const latestLow =
+    lows[lows.length - 1];
+
+
+  if (
+    latestHigh &&
+    lastCandle.close >
+      latestHigh.price
+  ) {
+    return 'BULLISH';
+  }
+
+
+  if (
+    latestLow &&
+    lastCandle.close <
+      latestLow.price
+  ) {
+    return 'BEARISH';
+  }
+
+
+  return 'NONE';
+}
+
 
 export function detectStructure(
   candles: Candle[]
 ): Structure {
-  const empty: Structure = {
-    state: 'UNCLEAR',
-
-    breakout: 'NONE',
-
-    hh: null,
-
-    hl: null,
-
-    lh: null,
-
-    ll: null,
-  };
 
   if (
     candles.length <
-    Math.max(
-      10,
-      CONFIG.swingStrength *
-        2 +
-        5
-    )
+    CONFIG.swingStrength * 2 + 5
   ) {
-    return empty;
+    return {
+      state: 'UNCLEAR',
+      breakout: 'NONE',
+      hh: null,
+      hl: null,
+      lh: null,
+      ll: null,
+    };
   }
 
-  const sample =
-    candles.slice(
-      -CONFIG.structureLookback
+
+  const swings =
+    detectSwings(candles);
+
+
+  const recentSwings =
+    getRecentSwings(
+      swings,
+      candles.length
     );
 
-  const last =
-    sample[
-      sample.length - 1
-    ];
-
-  const previous =
-    sample[
-      sample.length - 2
-    ];
 
   const highs =
-    sample.map(
-      (c) => c.high
+    getLastTwo(
+      recentSwings,
+      'HIGH'
     );
+
 
   const lows =
-    sample.map(
-      (c) => c.low
+    getLastTwo(
+      recentSwings,
+      'LOW'
     );
 
-  const history =
-    Math.max(
-      1,
-      sample.length - 5
+
+  const currentClose =
+    candles[candles.length - 1]
+      .close;
+
+
+  const state =
+    detectMarketState(
+      highs,
+      lows,
+      currentClose
     );
 
-  const previousHigh =
-    Math.max(
-      ...highs.slice(
-        0,
-        history
-      )
+
+  const breakout =
+    detectBreakout(
+      candles,
+      highs,
+      lows
     );
 
-  const previousLow =
-    Math.min(
-      ...lows.slice(
-        0,
-        history
-      )
-    );
 
-  let breakout:
-    Structure['breakout'] =
-      'NONE';
+  let hh:
+    number | null = null;
+
+  let hl:
+    number | null = null;
+
+  let lh:
+    number | null = null;
+
+  let ll:
+    number | null = null;
+
 
   if (
-    last.close >
-    previousHigh
+    highs.length >= 2
   ) {
-    breakout =
-      'BULLISH';
-  } else if (
-    last.close <
-    previousLow
-  ) {
-    breakout =
-      'BEARISH';
+    const previousHigh =
+      highs[highs.length - 2];
+
+    const latestHigh =
+      highs[highs.length - 1];
+
+
+    if (
+      latestHigh.price >
+      previousHigh.price
+    ) {
+      hh =
+        latestHigh.price;
+    } else {
+      lh =
+        latestHigh.price;
+    }
   }
 
-  const overallHigh =
-    Math.max(
-      ...highs
-    );
-
-  const overallLow =
-    Math.min(
-      ...lows
-    );
-
-  let state:
-    Structure['state'] =
-    'RANGE';
 
   if (
-    breakout ===
-    'BULLISH'
+    lows.length >= 2
   ) {
-    state =
-      'UPTREND';
-  } else if (
-    breakout ===
-    'BEARISH'
-  ) {
-    state =
-      'DOWNTREND';
-  } else if (
-    last.close >
-      overallHigh
-  ) {
-    state =
-      'UPTREND';
-  } else if (
-    last.close <
-      overallLow
-  ) {
-    state =
-      'DOWNTREND';
-  } else if (
-    previous.close >
-      previous.open &&
-    last.close >=
-      previous.close
-  ) {
-    state =
-      'UPTREND';
-  } else if (
-    previous.close <
-      previous.open &&
-    last.close <=
-      previous.close
-  ) {
-    state =
-      'DOWNTREND';
+    const previousLow =
+      lows[lows.length - 2];
+
+    const latestLow =
+      lows[lows.length - 1];
+
+
+    if (
+      latestLow.price >
+      previousLow.price
+    ) {
+      hl =
+        latestLow.price;
+    } else {
+      ll =
+        latestLow.price;
+    }
   }
 
-  const recentHigh =
-    findRecentHigh(
-      sample,
-      CONFIG.swingStrength
-    );
-
-  const recentLow =
-    findRecentLow(
-      sample,
-      CONFIG.swingStrength
-    );
 
   return {
     state,
-
     breakout,
-
-    hh: recentHigh,
-
-    hl: recentLow,
-
-    lh: recentHigh,
-
-    ll: recentLow,
+    hh,
+    hl,
+    lh,
+    ll,
   };
 }
