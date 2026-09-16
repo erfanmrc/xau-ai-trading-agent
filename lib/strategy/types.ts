@@ -138,3 +138,155 @@ export interface StrategyResult {
 
   invalidation: number | null;
 }
+
+export type StrategyName =
+  | 'SP2L'
+  | 'PRO_BTB'
+  | 'MICRO_MAP';
+
+export type StrategyStatus =
+  | 'VALID'
+  | 'WATCH'
+  | 'INVALID';
+
+export type NewsRisk =
+  | 'LOW'
+  | 'MEDIUM'
+  | 'HIGH'
+  | 'EXTREME';
+
+export type MacroBias =
+  | 'BULLISH'
+  | 'BEARISH'
+  | 'NEUTRAL'
+  | 'MIXED';
+
+export interface StrategySignal {
+  strategy: StrategyName;
+
+  status: StrategyStatus;
+
+  direction: Direction | null;
+
+  score: number;
+
+  entry: number | null;
+
+  stopLoss: number | null;
+
+  takeProfit: number | null;
+
+  risk: RiskPlan | null;
+
+  reasons: string[];
+
+  warnings: string[];
+}
+
+export interface ImbalanceZone {
+  direction: Direction;
+
+  high: number;
+
+  low: number;
+
+  startIndex?: number;
+
+  endIndex?: number;
+}
+
+export interface SpikeZone {
+  direction: Direction;
+
+  high: number;
+
+  low: number;
+
+  startIndex?: number;
+
+  endIndex?: number;
+}
+
+export interface LiquidityMap {
+  buySide: number[];
+
+  sellSide: number[];
+
+  previousDayHigh: number | null;
+
+  previousDayLow: number | null;
+
+  sessionHigh: number | null;
+
+  sessionLow: number | null;
+
+  equalHighs: number[];
+
+  equalLows: number[];
+
+  imbalanceZones: ImbalanceZone[];
+
+  spikeZones: SpikeZone[];
+}
+
+export interface MarketContext {
+  trend: Direction | null;
+
+  state: MarketState;
+
+  higherTimeframe: MarketState;
+
+  intermediateTimeframe: MarketState;
+
+  executionTimeframe: MarketState;
+
+  structureAlignment: boolean;
+
+  liquidity: LiquidityMap;
+
+  volatility: number | null;
+
+  newsRisk: NewsRisk;
+
+  macroBias: MacroBias;
+
+  reasons: string[];
+
+  warnings: string[];
+}
+
+export interface StrategyEvaluation {
+  strategy: StrategyName;
+
+  status: StrategyStatus;
+
+  direction: Direction | null;
+
+  score: number;
+
+  signal: StrategySignal;
+}
+
+export interface MultiStrategyResult {
+  symbol: 'XAUUSD';
+
+  marketContext: MarketContext;
+
+  strategies: {
+    SP2L: StrategySignal;
+    PRO_BTB: StrategySignal;
+    MICRO_MAP: StrategySignal;
+  };
+
+  activeSignals: StrategySignal[];
+
+  primaryDirection: Direction | null;
+
+  overallScore: number;
+
+  signal: Signal;
+
+  reasons: string[];
+
+  warnings: string[];
+}
