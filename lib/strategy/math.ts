@@ -1,11 +1,188 @@
-import { Candle } from './types';
-export const clamp=(v:number,a:number,b:number)=>Math.max(a,Math.min(b,v));
-export const body=(c:Candle)=>Math.abs(c.close-c.open);
-export const range=(c:Candle)=>Math.max(c.high-c.low,1e-9);
-export const bodyRatio=(c:Candle)=>body(c)/range(c);
-export const closeLocation=(c:Candle)=> (c.close-c.low)/range(c);
-export const dir=(c:Candle)=>c.close>c.open?'LONG':c.close<c.open?'SHORT':null;
-export function median(xs:number[]){if(!xs.length)return 0;const a=[...xs].sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
-export function atr(c:Candle[],n=14){if(c.length<2)return 0;const tr=c.slice(1).map((x,i)=>Math.max(x.high-x.low,Math.abs(x.high-c[i].close),Math.abs(x.low-c[i].close)));return median(tr.slice(-n));}
-export function medianRange(c:Candle[],n=20){return median(c.slice(-n).map(range));}
-export const roundPrice=(p:number,decimals=2)=>Number(p.toFixed(decimals));
+import {
+  Candle,
+  Direction,
+} from './types';
+
+export function range(
+  candle: Candle
+): number {
+  return Math.max(
+    0,
+    candle.high - candle.low
+  );
+}
+
+export function body(
+  candle: Candle
+): number {
+  return Math.abs(
+    candle.close - candle.open
+  );
+}
+
+export function bodyRatio(
+  candle: Candle
+): number {
+  const r = range(candle);
+
+  if (r <= 0) {
+    return 0;
+  }
+
+  return body(candle) / r;
+}
+
+export function closeLocation(
+  candle: Candle
+): number {
+  const r = range(candle);
+
+  if (r <= 0) {
+    return 0.5;
+  }
+
+  return (
+    (candle.close - candle.low) / r
+  );
+}
+
+export function dir(
+  candle: Candle
+): Direction | null {
+  if (
+    candle.close >
+    candle.open
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    candle.close <
+    candle.open
+  ) {
+    return 'SHORT';
+  }
+
+  return null;
+}
+
+export function median(
+  values: number[]
+): number {
+  if (
+    values.length === 0
+  ) {
+    return 0;
+  }
+
+  const sorted = [
+    ...values,
+  ].sort(
+    (a, b) => a - b
+  );
+
+  const middle =
+    Math.floor(
+      sorted.length / 2
+    );
+
+  if (
+    sorted.length % 2 === 0
+  ) {
+    return (
+      sorted[middle - 1] +
+      sorted[middle]
+    ) / 2;
+  }
+
+  return sorted[middle];
+}
+
+export function medianRange(
+  candles: Candle[],
+  length = 20
+): number {
+  const values =
+    candles
+      .slice(
+        -Math.max(
+          1,
+          length
+        )
+      )
+      .map(
+        range
+      );
+
+  return median(values);
+}
+
+export function atr(
+  candles: Candle[],
+  length = 14
+): number {
+  if (
+    candles.length < 2
+  ) {
+    return medianRange(
+      candles,
+      length
+    );
+  }
+
+  const start =
+    Math.max(
+      1,
+      candles.length -
+        Math.max(
+          1,
+          length
+        )
+    );
+
+  const trueRanges: number[] =
+    [];
+
+  for (
+    let i = start;
+    i < candles.length;
+    i += 1
+  ) {
+    const current =
+      candles[i];
+
+    const previousClose =
+      candles[
+        i - 1
+      ].close;
+
+    const tr =
+      Math.max(
+        current.high -
+          current.low,
+
+        Math.abs(
+          current.high -
+            previousClose
+        ),
+
+        Math.abs(
+          current.low -
+            previousClose
+        )
+      );
+
+    trueRanges.push(tr);
+  }
+
+  return (
+    median(
+      trueRanges
+    ) ||
+    medianRange(
+      candles,
+      length
+    ) ||
+    0
+  );
+}
