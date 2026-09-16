@@ -48,8 +48,12 @@ function buildMultiTF(c:Candle[],minutes:5|15):StrategyZone[] {
   if(tf.length<C.analysis.minCandles/Math.max(1,minutes)) return out;
   for(let i=3;i<tf.length;i++){
     const first=tf[i-3],a=tf[i-2],b=tf[i-1],d=tf[i];
-    const dir:'LONG'|'SHORT'|null=[first,a,b,d].every(x=>candleDirection(x)==='LONG' && bodyRatio(x)>=C.analysis.spike.bodyToRangeMin)?'LONG':
-      [first,a,b,d].every(x=>candleDirection(x)==='SHORT' && bodyRatio(x)>=C.analysis.spike.bodyToRangeMin)?'SHORT':null;
+    const group=[first,a,b,d];
+    const longCount=group.filter(x=>candleDirection(x)==='LONG').length;
+    const shortCount=group.filter(x=>candleDirection(x)==='SHORT').length;
+    const strongLong=group.filter(x=>candleDirection(x)==='LONG' && bodyRatio(x)>=C.analysis.spike.bodyToRangeMin).length;
+    const strongShort=group.filter(x=>candleDirection(x)==='SHORT' && bodyRatio(x)>=C.analysis.spike.bodyToRangeMin).length;
+    const dir:'LONG'|'SHORT'|null=strongLong>=3 && longCount>=3 ? 'LONG' : strongShort>=3 && shortCount>=3 ? 'SHORT' : null;
     if(!dir) continue;
     const pre=tf[i-4]; if(!pre) continue;
     const breakoutLevel=dir==='LONG'?pre.high:pre.low;
@@ -58,9 +62,7 @@ function buildMultiTF(c:Candle[],minutes:5|15):StrategyZone[] {
     const departure=Math.abs(impulseExtreme-breakoutLevel);
     if(departure<atrRef*C.analysis.btb.minDepartureATR) continue;
     const pad=Math.max(atrRef*C.analysis.btb.zonePaddingATR,0.05);
-    const z:StrategyZone=dir==='LONG'
-      ?{direction:dir,low:breakoutLevel-pad,high:breakoutLevel+pad,source:minutes===5?'BTB_5M':'BTB_15M',strength:88+(minutes===15?6:0),startIndex:i-3,endIndex:i,timeframe:minutes===5?'M5':'M15'}
-      :{direction:dir,low:breakoutLevel-pad,high:breakoutLevel+pad,source:minutes===5?'BTB_5M':'BTB_15M',strength:88+(minutes===15?6:0),startIndex:i-3,endIndex:i,timeframe:minutes===5?'M5':'M15'};
+    const z:StrategyZone={direction:dir,low:breakoutLevel-pad,high:breakoutLevel+pad,source:minutes===5?'BTB_5M':'BTB_15M',strength:88+(minutes===15?6:0),startIndex:i-3,endIndex:i,timeframe:minutes===5?'M5':'M15'};
     out.push(z);
   }
   return out.slice(-30);

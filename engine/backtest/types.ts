@@ -9,6 +9,8 @@ export type BacktestConfig={
   startIndex?:number;
   execution:'NEXT_OPEN'|'SIGNAL_CLOSE';
   allowX2:boolean;
+  cooldownBars:number;
+  cooldownAfterLossBars:number;
 };
 
 export type BacktestOpportunity={
@@ -49,18 +51,57 @@ export type BacktestStrategyStats={
 };
 
 export type BacktestTrade={
-  id:number; strategy:StrategyName; direction:Direction; signalTime:string; entryTime:string; exitTime:string;
-  entry:number; exit:number; stop:number; tp:number; lot:number; lot2:number; entry2:number|null;
-  pnl:number; rMultiple:number; plannedRiskPercent:number; outcome:'TP'|'SL'|'EOD';
+  id:number;
+  strategy:StrategyName;
+  direction:Direction;
+  signalTime:string;
+  entryTime:string;
+  exitTime:string;
+  entry:number;
+  exit:number;
+  stop:number;
+  tp:number;
+  lot:number;
+  lot2:number;
+  entry2:number|null;
+  x2Triggered:boolean;
+  x2ActivationTime:string|null;
+  initialRiskPercent:number;
+  x2RiskPercent:number;
+  plannedRiskPercent:number;
+  actualRiskPercent:number;
+  pnl:number;
+  rMultiple:number;
+  outcome:'TP'|'SL'|'EOD';
 };
 
 export type BacktestResult={
-  config:BacktestConfig; initialBalance:number; finalBalance:number; netPnl:number; returnPct:number;
-  trades:BacktestTrade[]; tradeCount:number; wins:number; losses:number; eod:number; winRate:number;
-  grossProfit:number; grossLoss:number; profitFactor:number|null; avgR:number;
-  maxDrawdownPct:number; maxDailyDrawdownPct:number; maxDailyLossDollars:number; maxDailyRiskUsedPercent:number;
+  config:BacktestConfig;
+  initialBalance:number;
+  finalBalance:number;
+  netPnl:number;
+  returnPct:number;
+  trades:BacktestTrade[];
+  tradeCount:number;
+  wins:number;
+  losses:number;
+  eod:number;
+  winRate:number;
+  grossProfit:number;
+  grossLoss:number;
+  profitFactor:number|null;
+  avgR:number;
+  maxDrawdownPct:number;
+  maxDailyDrawdownPct:number;
+  maxDailyLossDollars:number;
+  maxDailyRiskUsedPercent:number;
+  maxDailyActualRiskPercent:number;
   propRules:{profitTargetPct:number;maxTotalDrawdownPct:number;maxDailyDrawdownPct:number;minTradingDays:number};
-  reachedProfitTarget:boolean; breachedMaxDrawdown:boolean; breachedDailyDrawdown:boolean; tradingDays:number; tradingDaySet:string[];
+  reachedProfitTarget:boolean;
+  breachedMaxDrawdown:boolean;
+  breachedDailyDrawdown:boolean;
+  tradingDays:number;
+  tradingDaySet:string[];
   opportunityCount:number;
   validOpportunities:BacktestOpportunity[];
   opportunityStats:BacktestStrategyStats[];
@@ -68,4 +109,4 @@ export type BacktestResult={
   dataCoverage:{start:string|null;end:string|null;calendarDays:number;tradingDaysWithData:number;candles:number};
 };
 
-export type BacktestInput={candles:Candle[]; config?:Partial<BacktestConfig>; propRules?:Partial<BacktestResult['propRules']>};
+export type BacktestInput={candles:Candle[];config?:Partial<BacktestConfig>;propRules?:Partial<BacktestResult['propRules']>};

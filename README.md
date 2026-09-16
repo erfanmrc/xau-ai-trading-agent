@@ -1,4 +1,4 @@
-# XAU AI Trading Agent — Batch 6: SP2L/BTB/Micro-MAP practical execution
+# XAU AI Trading Agent — Batch 7: SP2L/BTB/Micro-MAP practical execution
 
 ## Core execution model
 - One `VALID` strategy with a complete entry/stop plan is sufficient.
@@ -29,6 +29,14 @@
 - Stop must remain tight relative to ATR.
 - Uses a higher target profile (`4R`) with a minimum RR guard (`3R`).
 - A valid Micro-MAP remains rare by design; the system should not loosen it merely to increase trade count.
+
+## Batch 7 optimizations
+- X2 is now a deferred add-on: the second position is activated only after price first moves away from Entry 1 and then returns to the midpoint between Entry 1 and the shared stop.
+- The backtest never credits X2 PnL or floating exposure before the X2 trigger is actually touched.
+- BTB confirmation requires a touch/retest plus a decisive rejection close beyond the breakout zone; oversized BTB stops are rejected instead of being rescued by a tiny lot.
+- Confluence is capped in the strategy score so round/mean levels strengthen a real setup without overpowering weak price action.
+- A short cooldown prevents repeated entries from the same strategy immediately after an attempt, with a longer cooldown after a stop-loss.
+- SP2L uses a 3R target profile; Micro-MAP keeps 4R and does not use X2 because it is already the highest-variance, tight-stop setup.
 
 ## Risk and X2
 - Base risk defaults to 0.5% per trade.

@@ -4,41 +4,67 @@ import { BacktestConfig, BacktestInput, BacktestResult, BacktestTrade, BacktestO
 import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { buildRisk } from '@/engine/risk';
 
-const DEFAULTS:BacktestConfig={balance:C.balance,riskPercent:C.riskPercent,dailyRiskLimitPercent:C.dailyMaxRiskPercent,maxTradesPerDay:3,spread:0.05,startIndex:60,execution:'NEXT_OPEN',allowX2:true};
+const DEFAULTS:BacktestConfig={
+  balance:C.balance,
+  riskPercent:C.riskPercent,
+  dailyRiskLimitPercent:C.dailyMaxRiskPercent,
+  maxTradesPerDay:3,
+  spread:0.05,
+  startIndex:60,
+  execution:'NEXT_OPEN',
+  allowX2:true,
+  cooldownBars:C.analysis.execution.minCooldownBars,
+  cooldownAfterLossBars:C.analysis.execution.minCooldownAfterLossBars,
+};
+
 const day=(t:string)=>new Date(t).toISOString().slice(0,10);
 const pipsRisk=(entry:number,stop:number,dir:Direction)=>dir==='LONG'?entry-stop:stop-entry;
 const emptyStats=(strategy:StrategyName):BacktestStrategyStats=>({strategy,opportunities:0,valid:0,watch:0,invalid:0,executed:0,rejected:0,wins:0,losses:0,pnl:0,totalR:0,avgR:0,winRate:0,profitFactor:null});
+const initialRiskPercent=(lot:number,entry:number,stop:number,balance:number)=>Math.abs(entry-stop)*lot*C.contractSize/Math.max(balance,1e-9)*100;
 
 export function runBacktest(input:BacktestInput):BacktestResult {
   const candles=input.candles.slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
   const cfg={...DEFAULTS,...input.config};
   const prop={profitTargetPct:10,maxTotalDrawdownPct:12,maxDailyDrawdownPct:5,minTradingDays:3,...input.propRules};
   let balance=cfg.balance, peak=balance, dayStart=balance, currentDay='';
-  let open:{strategy:StrategyName;direction:Direction;signalTime:string;entryTime:string;entry:number;entry2:number|null;lot:number;lot2:number;stop:number;tp:number;plannedRiskPercent:number}|null=null;
+
+  type OpenPosition={
+    strategy:StrategyName;direction:Direction;signalTime:string;entryTime:string;entry:number;entry2:number|null;lot:number;lot2:number;stop:number;tp:number;
+    plannedRiskPercent:number;initialRiskPercent:number;x2RiskPercent:number;x2Activated:boolean;x2ActivationTime:string|null;favorableMove:number;
+  };
+  let open:OpenPosition|null=null;
+
   const trades:BacktestTrade[]=[];
   const opportunities:BacktestOpportunity[]=[];
   const dailyPnl=new Map<string,number>();
   const dailyRiskUsed=new Map<string,number>();
+  const dailyActualRisk=new Map<string,number>();
   const dailyTrades=new Map<string,number>();
   const rejectionCounts=new Map<string,number>();
   const stats=new Map<StrategyName,BacktestStrategyStats>([['SP2L',emptyStats('SP2L')],['PRO_BTB',emptyStats('PRO_BTB')],['MICROMAP',emptyStats('MICROMAP')]]);
-  let maxDD=0,maxDailyDD=0,maxDailyRiskUsed=0;
+  const lastTradeIndex=new Map<StrategyName,number>();
+  const lastLossIndex=new Map<StrategyName,number>();
+  let maxDD=0,maxDailyDD=0,maxDailyRiskUsed=0,maxDailyActualRisk=0;
 
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
     opportunities.push(o);
     const st=stats.get(o.strategy)!;
     st.opportunities++;
-    if(o.status==='VALID')st.valid++;
-    if(o.status==='WATCH')st.watch++;
-    if(o.status==='INVALID')st.invalid++;
-    if(o.action==='REJECT'){st.rejected++;if(o.rejectionReason)addRejection(o.rejectionReason);}
+    if(o.status==='VALID') st.valid++;
+    if(o.status==='WATCH') st.watch++;
+    if(o.status==='INVALID') st.invalid++;
+    if(o.action==='REJECT'){
+      st.rejected++;
+      if(o.rejectionReason) addRejection(o.rejectionReason);
+    }
   };
-  const equityAt=(price:number, pos:typeof open)=>{
-    if(!pos)return balance;
+
+  const equityAt=(price:number,pos:OpenPosition|null)=>{
+    if(!pos) return balance;
     const long=pos.direction==='LONG';
     let floating=(long?price-pos.entry:pos.entry-price)*pos.lot*C.contractSize;
-    if(pos.lot2&&pos.entry2!==null) floating+=(long?price-pos.entry2:pos.entry2-price)*pos.lot2*C.contractSize;
+    if(pos.x2Activated && pos.lot2&&pos.entry2!==null) floating+=(long?price-pos.entry2:pos.entry2-price)*pos.lot2*C.contractSize;
     return balance+floating;
   };
   const updateDrawdown=(price:number)=>{
@@ -51,35 +77,79 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   const recordTrade=(trade:BacktestTrade)=>{
     trades.push(trade);
     const st=stats.get(trade.strategy)!;
-    if(trade.pnl>0)st.wins++; else if(trade.pnl<0)st.losses++;
+    if(trade.pnl>0) st.wins++; else if(trade.pnl<0) st.losses++;
     st.pnl+=trade.pnl; st.totalR+=trade.rMultiple;
+  };
+
+  const markOpportunity=(index:number,strategy:StrategyName,action:'EXECUTE'|'WATCH'|'REJECT',reason:string|null)=>{
+    for(let oi=opportunities.length-1;oi>=0;oi--){
+      const o=opportunities[oi];
+      if(o.index===index && o.strategy===strategy && o.status==='VALID'){
+        if(o.action==='EXECUTE' && action==='REJECT') stats.get(strategy)!.rejected++;
+        o.action=action;
+        o.rejectionReason=reason;
+        if(action==='REJECT' && reason) addRejection(reason);
+        break;
+      }
+    }
   };
 
   for(let i=Math.max(cfg.startIndex??60,1);i<candles.length;i++){
     const c=candles[i];
     const d=day(c.time);
-    if(d!==currentDay){currentDay=d;dayStart=balance;dailyPnl.set(d,dailyPnl.get(d)||0);dailyRiskUsed.set(d,dailyRiskUsed.get(d)||0);dailyTrades.set(d,dailyTrades.get(d)||0);}
+    if(d!==currentDay){
+      currentDay=d;
+      dayStart=balance;
+      dailyPnl.set(d,dailyPnl.get(d)||0);
+      dailyRiskUsed.set(d,dailyRiskUsed.get(d)||0);
+      dailyActualRisk.set(d,dailyActualRisk.get(d)||0);
+      dailyTrades.set(d,dailyTrades.get(d)||0);
+    }
 
     if(open){
-      const hi=c.high,lo=c.low,long=open.direction==='LONG';
-      const hitStop=long?lo<=open.stop:hi>=open.stop;
-      const hitTp=long?hi>=open.tp:lo<=open.tp;
+      const long=open.direction==='LONG';
+      const priceFavorable=long?Math.max(0,c.high-open.entry):Math.max(0,open.entry-c.low);
+      open.favorableMove=Math.max(open.favorableMove,priceFavorable);
+      const firstStopDistance=pipsRisk(open.entry,open.stop,open.direction);
+      const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*0.10);
+      if(!open.x2Activated && open.entry2!==null && open.lot2>0 && open.favorableMove>=favorableThreshold){
+        const x2Hit=long?c.low<=open.entry2:c.high>=open.entry2;
+        if(x2Hit){
+          open.x2Activated=true;
+          open.x2ActivationTime=c.time;
+          dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+open.x2RiskPercent);
+        }
+      }
+
+      const hitStop=long?c.low<=open.stop:c.high>=open.stop;
+      const hitTp=long?c.high>=open.tp:c.low<=open.tp;
       if(hitStop||hitTp){
         const exit=hitStop&&hitTp?open.stop:(hitStop?open.stop:open.tp);
         const outcome:BacktestTrade['outcome']=hitStop?'SL':'TP';
         let pnl=(long?exit-open.entry:open.entry-exit)*open.lot*C.contractSize;
-        if(open.lot2&&open.entry2!==null)pnl+=(long?exit-open.entry2:open.entry2-exit)*open.lot2*C.contractSize;
+        if(open.x2Activated && open.lot2&&open.entry2!==null) pnl+=(long?exit-open.entry2:open.entry2-exit)*open.lot2*C.contractSize;
         balance+=pnl;
         dailyPnl.set(currentDay,(dailyPnl.get(currentDay)||0)+pnl);
-        const risk=Math.max(Math.abs(open.entry-open.stop)*open.lot*C.contractSize + (open.lot2&&open.entry2!==null?Math.abs(open.entry2-open.stop)*open.lot2*C.contractSize:0),1e-9);
-        recordTrade({id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:c.time,entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.lot2||0,entry2:open.entry2??null,pnl,rMultiple:pnl/risk,plannedRiskPercent:open.plannedRiskPercent,outcome});
+        const firstRiskDollars=Math.abs(open.entry-open.stop)*open.lot*C.contractSize;
+        const secondRiskDollars=open.x2Activated&&open.entry2!==null?Math.abs(open.entry2-open.stop)*open.lot2*C.contractSize:0;
+        const actualRisk=Math.max(firstRiskDollars+secondRiskDollars,1e-9);
+        const actualRiskPct=actualRisk/Math.max(balance-pnl,1e-9)*100;
+        recordTrade({
+          id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:c.time,
+          entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
+          x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
+          plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome
+        });
+        if(outcome==='SL') lastLossIndex.set(open.strategy,i);
         open=null;
       }
     }
 
     updateDrawdown(c.close);
     const used=dailyRiskUsed.get(currentDay)||0;
+    const actualUsed=dailyActualRisk.get(currentDay)||0;
     maxDailyRiskUsed=Math.max(maxDailyRiskUsed,used);
+    maxDailyActualRisk=Math.max(maxDailyActualRisk,actualUsed);
     if(open) continue;
 
     const todayTrades=dailyTrades.get(currentDay)||0;
@@ -95,51 +165,73 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         if(chosen?.strategy===s.strategy) action='EXECUTE';
         else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 filter blocks the strategy direction';}
         else {action='REJECT';rejectionReason=`Another valid candidate scored higher: ${chosen?.strategy??'none selected'}`;}
-      }else if(s.status==='INVALID'){action='REJECT';rejectionReason=s.reason;}
-      else {action='WATCH';}
-      addOpportunity({index:i,time:c.time,strategy:s.strategy,direction:s.direction??null,status:s.status,action,score:candidate?.score??s.score,reason:s.reason,rejectionReason,entry:s.entry??null,stop:s.stop??null,h1:signal.context.h1,m15:signal.context.m15,m5:signal.context.m5,m1:signal.context.m1,confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[]});
+      } else if(s.status==='INVALID'){ action='REJECT'; rejectionReason=s.reason; }
+      addOpportunity({
+        index:i,time:c.time,strategy:s.strategy,direction:s.direction??null,status:s.status,action,score:candidate?.score??s.score,reason:s.reason,rejectionReason,
+        entry:s.entry??null,stop:s.stop??null,h1:signal.context.h1,m15:signal.context.m15,m5:signal.context.m5,m1:signal.context.m1,
+        confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[]
+      });
     }
 
     if(!chosen) continue;
     const source=signal.signals.find(x=>x.strategy===chosen.strategy);
-    const markSelectedRejected=(reason:string)=>{
-      for(let oi=opportunities.length-1;oi>=0;oi--){
-        if(opportunities[oi].index===i && opportunities[oi].strategy===chosen.strategy && opportunities[oi].action==='EXECUTE'){
-          opportunities[oi].action='REJECT';opportunities[oi].rejectionReason=reason;
-          stats.get(chosen.strategy)!.rejected++;addRejection(reason);break;
-        }
-      }
-    };
-    if(!source?.direction||source.entry==null||source.stop==null||!source.risk){markSelectedRejected('Selected signal lacks complete entry/risk plan');continue;}
+    if(!source?.direction||source.entry==null||source.stop==null||!source.risk){markOpportunity(i,chosen.strategy,'REJECT','Selected signal lacks complete entry/risk plan');continue;}
+
+    const lastTrade=lastTradeIndex.get(chosen.strategy);
+    if(lastTrade!=null && i-lastTrade<cfg.cooldownBars){
+      markOpportunity(i,chosen.strategy,'REJECT',`Strategy cooldown active (${cfg.cooldownBars} bars)`); continue;
+    }
+    const lastLoss=lastLossIndex.get(chosen.strategy);
+    if(lastLoss!=null && i-lastLoss<cfg.cooldownAfterLossBars){
+      markOpportunity(i,chosen.strategy,'REJECT',`Post-loss cooldown active (${cfg.cooldownAfterLossBars} bars)`); continue;
+    }
 
     const entry=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].open:source.entry;
     const stop=source.stop;
     const entryRisk=pipsRisk(entry,stop,source.direction);
-    if(entryRisk<=0){markSelectedRejected('Entry/stop geometry is invalid after execution-price adjustment');continue;}
+    if(entryRisk<=0){markOpportunity(i,chosen.strategy,'REJECT','Entry/stop geometry is invalid after execution-price adjustment');continue;}
 
-    const liveRisk=buildRisk(source.direction,entry,stop,balance,cfg.riskPercent,cfg.spread,source.risk.rr,cfg.allowX2);
-    if(!liveRisk.tradable||!liveRisk.lotSize){markSelectedRejected('Risk engine rejected the position size');continue;}
-    const plannedRiskPercent=liveRisk.combinedRiskPercent??liveRisk.riskPercent;
+    const liveRisk=buildRisk(source.direction,entry,stop,balance,cfg.riskPercent,cfg.spread,source.risk.rr,cfg.allowX2 && chosen.strategy!=='MICROMAP');
+    if(!liveRisk.tradable||!liveRisk.lotSize){markOpportunity(i,chosen.strategy,'REJECT','Risk engine rejected the position size');continue;}
+    const initialRisk=initialRiskPercent(liveRisk.lotSize,entry,stop,balance);
+    const combinedRisk=liveRisk.combinedRiskPercent??initialRisk;
     const nowUsed=dailyRiskUsed.get(currentDay)||0;
-    if(nowUsed+plannedRiskPercent>cfg.dailyRiskLimitPercent+1e-9){markSelectedRejected('Daily risk budget would be exceeded');continue;}
+    if(nowUsed+combinedRisk>cfg.dailyRiskLimitPercent+1e-9){markOpportunity(i,chosen.strategy,'REJECT','Daily potential-risk budget would be exceeded');continue;}
 
     const tp=liveRisk.takeProfit??(source.direction==='LONG'?entry+entryRisk*source.risk.rr:entry-entryRisk*source.risk.rr);
-    const entry2=cfg.allowX2?liveRisk.x2Entry??null:null;
-    const lot2=cfg.allowX2?liveRisk.x2LotSize??0:0;
+    const entry2=cfg.allowX2 && chosen.strategy!=='MICROMAP'?liveRisk.x2Entry??null:null;
+    const lot2=cfg.allowX2 && chosen.strategy!=='MICROMAP'?liveRisk.x2LotSize??0:0;
+    const x2RiskPct=entry2!==null&&lot2>0?Math.max(0,combinedRisk-initialRisk):0;
     const entryTime=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].time:c.time;
-    open={strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,plannedRiskPercent};
-    dailyRiskUsed.set(currentDay,nowUsed+plannedRiskPercent);
+    open={
+      strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
+      plannedRiskPercent:Number(combinedRisk.toFixed(4)),initialRiskPercent:Number(initialRisk.toFixed(4)),x2RiskPercent:Number(x2RiskPct.toFixed(4)),
+      x2Activated:false,x2ActivationTime:null,favorableMove:0
+    };
+    dailyRiskUsed.set(currentDay,nowUsed+combinedRisk);
+    dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+initialRisk);
     dailyTrades.set(currentDay,(dailyTrades.get(currentDay)||0)+1);
+    lastTradeIndex.set(chosen.strategy,i);
     stats.get(chosen.strategy)!.executed++;
   }
 
   if(open){
-    const last=candles.at(-1)!;const long=open.direction==='LONG';const exit=last.close;
+    const last=candles.at(-1)!; const long=open.direction==='LONG'; const exit=last.close;
     let pnl=(long?exit-open.entry:open.entry-exit)*open.lot*C.contractSize;
-    if(open.lot2&&open.entry2!==null)pnl+=(long?exit-open.entry2:open.entry2-exit)*open.lot2*C.contractSize;
-    balance+=pnl;dailyPnl.set(day(last.time),(dailyPnl.get(day(last.time))||0)+pnl);
-    const risk=Math.max(Math.abs(open.entry-open.stop)*open.lot*C.contractSize+(open.lot2&&open.entry2!==null?Math.abs(open.entry2-open.stop)*open.lot2*C.contractSize:0),1e-9);
-    recordTrade({id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:last.time,entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.lot2||0,entry2:open.entry2??null,pnl,rMultiple:pnl/risk,plannedRiskPercent:open.plannedRiskPercent,outcome:'EOD'});
+    if(open.x2Activated && open.lot2&&open.entry2!==null) pnl+=(long?exit-open.entry2:open.entry2-exit)*open.lot2*C.contractSize;
+    balance+=pnl;
+    const lastDay=day(last.time);
+    dailyPnl.set(lastDay,(dailyPnl.get(lastDay)||0)+pnl);
+    const firstRiskDollars=Math.abs(open.entry-open.stop)*open.lot*C.contractSize;
+    const secondRiskDollars=open.x2Activated&&open.entry2!==null?Math.abs(open.entry2-open.stop)*open.lot2*C.contractSize:0;
+    const actualRisk=Math.max(firstRiskDollars+secondRiskDollars,1e-9);
+    const actualRiskPct=actualRisk/Math.max(balance-pnl,1e-9)*100;
+    recordTrade({
+      id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:last.time,
+      entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
+      x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
+      plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome:'EOD'
+    });
     open=null;
     updateDrawdown(last.close);
   }
@@ -162,14 +254,37 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   const days=[...new Set(trades.map(t=>day(t.entryTime)))];
   const dataDays=[...new Set(candles.map(x=>day(x.time)))];
   const worstDailyDollars=Math.max(0,...Array.from(dailyPnl.values()).map(x=>-x));
+
   return {
-    config:cfg,initialBalance:cfg.balance,finalBalance:Number(balance.toFixed(2)),netPnl:Number(net.toFixed(2)),returnPct:Number((net/cfg.balance*100).toFixed(2)),
-    trades,tradeCount:trades.length,wins,losses,eod,winRate:trades.length?Number((wins/trades.length*100).toFixed(2)):0,
-    grossProfit:Number(gp.toFixed(2)),grossLoss:Number(gl.toFixed(2)),profitFactor:gl>0?Number((gp/gl).toFixed(3)):null,
+    config:cfg,
+    initialBalance:cfg.balance,
+    finalBalance:Number(balance.toFixed(2)),
+    netPnl:Number(net.toFixed(2)),
+    returnPct:Number((net/cfg.balance*100).toFixed(2)),
+    trades,
+    tradeCount:trades.length,
+    wins,
+    losses,
+    eod,
+    winRate:trades.length?Number((wins/trades.length*100).toFixed(2)):0,
+    grossProfit:Number(gp.toFixed(2)),
+    grossLoss:Number(gl.toFixed(2)),
+    profitFactor:gl>0?Number((gp/gl).toFixed(3)):null,
     avgR:trades.length?Number((trades.reduce((s,t)=>s+t.rMultiple,0)/trades.length).toFixed(3)):0,
-    maxDrawdownPct:Number(maxDD.toFixed(2)),maxDailyDrawdownPct:Number(maxDailyDD.toFixed(2)),maxDailyLossDollars:Number(worstDailyDollars.toFixed(2)),maxDailyRiskUsedPercent:Number(maxDailyRiskUsed.toFixed(2)),
-    propRules:prop,reachedProfitTarget:net/cfg.balance*100>=prop.profitTargetPct,breachedMaxDrawdown:maxDD>=prop.maxTotalDrawdownPct,breachedDailyDrawdown:maxDailyDD>=prop.maxDailyDrawdownPct,
-    tradingDays:days.length,tradingDaySet:days,opportunityCount:opportunities.length,validOpportunities:opportunities.filter(x=>x.status==='VALID'),opportunityStats:[...stats.values()],
+    maxDrawdownPct:Number(maxDD.toFixed(2)),
+    maxDailyDrawdownPct:Number(maxDailyDD.toFixed(2)),
+    maxDailyLossDollars:Number(worstDailyDollars.toFixed(2)),
+    maxDailyRiskUsedPercent:Number(maxDailyRiskUsed.toFixed(2)),
+    maxDailyActualRiskPercent:Number(maxDailyActualRisk.toFixed(2)),
+    propRules:prop,
+    reachedProfitTarget:net/cfg.balance*100>=prop.profitTargetPct,
+    breachedMaxDrawdown:maxDD>=prop.maxTotalDrawdownPct,
+    breachedDailyDrawdown:maxDailyDD>=prop.maxDailyDrawdownPct,
+    tradingDays:days.length,
+    tradingDaySet:days,
+    opportunityCount:opportunities.length,
+    validOpportunities:opportunities.filter(x=>x.status==='VALID'),
+    opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
