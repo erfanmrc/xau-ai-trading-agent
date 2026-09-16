@@ -451,13 +451,12 @@ export function analyze(
   }
 
   const leg2 =
-    spike
-      ? detectLeg2(
-          candles,
-          spike,
-          config
-        )
-      : null;
+  spike
+    ? detectLeg2(
+        candles,
+        spike
+      )
+    : null;
 
   result.setup.leg2 =
     leg2;
