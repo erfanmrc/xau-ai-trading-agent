@@ -1,4 +1,5 @@
 import { CONFIG } from './config';
+
 import {
   Candle,
   Direction,
@@ -13,10 +14,38 @@ import {
 } from './math';
 
 
-function getImpulseRange(
+interface Impulse {
+  high: number;
+  low: number;
+  range: number;
+}
+
+
+interface PullbackResult {
+  index: number;
+  retrace: number;
+}
+
+
+interface ConfirmationResult {
+  index: number;
+  entry: number;
+}
+
+
+function getImpulse(
   candles: Candle[],
   spike: Spike
-) {
+): Impulse | null {
+
+  if (
+    spike.startIndex < 0 ||
+    spike.endIndex >= candles.length ||
+    spike.startIndex > spike.endIndex
+  ) {
+    return null;
+  }
+
   const impulseCandles =
     candles.slice(
       spike.startIndex,
@@ -51,27 +80,43 @@ function getImpulseRange(
       );
   }
 
+  const range =
+    high - low;
+
+  if (
+    !Number.isFinite(range) ||
+    range <= 0
+  ) {
+    return null;
+  }
+
   return {
     high,
     low,
-    range: high - low,
+    range,
   };
 }
 
 
-function getRetracement(
+/*
+ * LONG:
+ *
+ * 0%   = impulse high
+ * 100% = impulse low
+ *
+ * SHORT:
+ *
+ * 0%   = impulse low
+ * 100% = impulse high
+ */
+function retracementFromPrice(
   direction: Direction,
-  impulseHigh: number,
-  impulseLow: number,
+  impulse: Impulse,
   price: number
 ): number {
 
-  const range =
-    impulseHigh -
-    impulseLow;
-
   if (
-    range <= 0
+    impulse.range <= 0
   ) {
     return 0;
   }
@@ -80,15 +125,44 @@ function getRetracement(
     direction === 'LONG'
   ) {
     return (
-      impulseHigh -
-      price
-    ) / range;
+      impulse.high - price
+    ) / impulse.range;
   }
 
   return (
-    price -
-    impulseLow
-  ) / range;
+    price - impulse.low
+  ) / impulse.range;
+}
+
+
+/*
+ * Returns the deepest retracement
+ * reached by a candle.
+ *
+ * LONG  -> candle LOW matters
+ * SHORT -> candle HIGH matters
+ */
+function candleRetracement(
+  direction: Direction,
+  impulse: Impulse,
+  candle: Candle
+): number {
+
+  if (
+    direction === 'LONG'
+  ) {
+    return retracementFromPrice(
+      direction,
+      impulse,
+      candle.low
+    );
+  }
+
+  return retracementFromPrice(
+    direction,
+    impulse,
+    candle.high
+  );
 }
 
 
@@ -100,31 +174,40 @@ function isPullbackCandle(
   const candleDirection =
     dir(candle);
 
-  /*
-   * A pullback is allowed to move
-   * against the impulse direction.
-   */
-
   if (
     direction === 'LONG'
   ) {
     return (
-      candleDirection ===
-        'SHORT' ||
-      candle.close <
-        candle.open
+      candleDirection === 'SHORT' ||
+      candle.close < candle.open
     );
   }
 
   return (
-    candleDirection ===
-      'LONG' ||
-    candle.close >
-      candle.open
+    candleDirection === 'LONG' ||
+    candle.close > candle.open
   );
 }
 
 
+function isValidRetracement(
+  retrace: number
+): boolean {
+
+  return (
+    Number.isFinite(retrace) &&
+    retrace >=
+      CONFIG.pullback.minRetrace &&
+    retrace <=
+      CONFIG.pullback.maxRetrace
+  );
+}
+
+
+/*
+ * Confirmation must be a strong candle
+ * in the original spike direction.
+ */
 function isConfirmationCandle(
   candle: Candle,
   direction: Direction
@@ -142,8 +225,7 @@ function isConfirmationCandle(
 
   if (
     body <
-    CONFIG.confirmation
-      .minBodyToRange
+    CONFIG.confirmation.minBodyToRange
   ) {
     return false;
   }
@@ -156,41 +238,50 @@ function isConfirmationCandle(
   ) {
     return (
       location >=
-      CONFIG.confirmation
-        .closeInDirection
+      CONFIG.confirmation.closeInDirection
     );
   }
 
   return (
     location <=
-    1 -
-      CONFIG.confirmation
-        .closeInDirection
+      1 -
+      CONFIG.confirmation.closeInDirection
   );
 }
 
 
+/*
+ * Find the first valid pullback after
+ * the spike.
+ *
+ * The wick is used to determine whether
+ * price actually reached the retracement
+ * zone. The candle itself must also show
+ * a counter-directional pullback.
+ */
 function findPullback(
   candles: Candle[],
   spike: Spike,
-  impulseHigh: number,
-  impulseLow: number
-) {
-
-  const direction =
-    spike.direction;
+  impulse: Impulse
+): PullbackResult | null {
 
   const startIndex =
     spike.endIndex + 1;
 
+  const maxBars =
+    CONFIG.pullback.maxBarsAfterSpike;
+
   const endIndex =
     Math.min(
       candles.length - 1,
-      startIndex +
-        CONFIG.pullback
-          .maxBarsAfterSpike -
-        1
+      startIndex + maxBars - 1
     );
+
+  if (
+    startIndex > endIndex
+  ) {
+    return null;
+  }
 
   for (
     let i = startIndex;
@@ -205,38 +296,45 @@ function findPullback(
       continue;
     }
 
+    /*
+     * If price completely invalidates
+     * the impulse before a pullback is
+     * established, reject the setup.
+     */
+    if (
+      spike.direction === 'LONG' &&
+      candle.low <= impulse.low
+    ) {
+      return null;
+    }
+
+    if (
+      spike.direction === 'SHORT' &&
+      candle.high >= impulse.high
+    ) {
+      return null;
+    }
+
     if (
       !isPullbackCandle(
         candle,
-        direction
+        spike.direction
       )
     ) {
       continue;
     }
 
-    /*
-     * Use the candle close as the
-     * first retracement reference.
-     */
-
     const retrace =
-      getRetracement(
-        direction,
-        impulseHigh,
-        impulseLow,
-        candle.close
+      candleRetracement(
+        spike.direction,
+        impulse,
+        candle
       );
 
     if (
-      retrace <
-      CONFIG.pullback.minRetrace
-    ) {
-      continue;
-    }
-
-    if (
-      retrace >
-      CONFIG.pullback.maxRetrace
+      !isValidRetracement(
+        retrace
+      )
     ) {
       continue;
     }
@@ -251,21 +349,33 @@ function findPullback(
 }
 
 
+/*
+ * Confirmation is searched only for a
+ * short period after the pullback.
+ *
+ * This prevents an old pullback from
+ * generating a late entry several candles
+ * later.
+ */
 function findConfirmation(
   candles: Candle[],
   pullbackIndex: number,
   direction: Direction
-) {
+): ConfirmationResult | null {
 
-  /*
-   * Confirmation must happen after
-   * the pullback.
-   */
+  const maxConfirmationBars =
+    3;
+
+  const endIndex =
+    Math.min(
+      candles.length - 1,
+      pullbackIndex +
+        maxConfirmationBars
+    );
 
   for (
-    let i =
-      pullbackIndex + 1;
-    i < candles.length;
+    let i = pullbackIndex + 1;
+    i <= endIndex;
     i++
   ) {
 
@@ -287,35 +397,25 @@ function findConfirmation(
         entry: candle.close,
       };
     }
-
-    /*
-     * Once a new candle has moved too
-     * far against the original setup,
-     * do not keep looking indefinitely.
-     */
-
-    const barsSincePullback =
-      i -
-      pullbackIndex;
-
-    if (
-      barsSincePullback >
-      3
-    ) {
-      break;
-    }
   }
 
   return null;
 }
 
 
+/*
+ * Stop is placed beyond the actual
+ * pullback extreme.
+ *
+ * We intentionally do not add a hardcoded
+ * pip amount here because XAUUSD pricing
+ * and broker specifications belong to the
+ * execution/risk layer.
+ */
 function calculateStop(
   direction: Direction,
   candles: Candle[],
-  pullbackIndex: number,
-  impulseLow: number,
-  impulseHigh: number
+  pullbackIndex: number
 ): number | null {
 
   const pullback =
@@ -328,25 +428,55 @@ function calculateStop(
   if (
     direction === 'LONG'
   ) {
-
-    /*
-     * Stop below the pullback low.
-     */
-
-    return Math.min(
-      pullback.low,
-      impulseLow
-    );
+    return pullback.low;
   }
 
-  /*
-   * Stop above the pullback high.
-   */
+  return pullback.high;
+}
 
-  return Math.max(
-    pullback.high,
-    impulseHigh
-  );
+
+/*
+ * Make sure confirmation did not occur
+ * after the setup had already invalidated.
+ */
+function confirmationIsValid(
+  direction: Direction,
+  candles: Candle[],
+  pullbackIndex: number,
+  confirmationIndex: number,
+  stop: number
+): boolean {
+
+  for (
+    let i =
+      pullbackIndex + 1;
+    i <= confirmationIndex;
+    i++
+  ) {
+
+    const candle =
+      candles[i];
+
+    if (!candle) {
+      continue;
+    }
+
+    if (
+      direction === 'LONG' &&
+      candle.low <= stop
+    ) {
+      return false;
+    }
+
+    if (
+      direction === 'SHORT' &&
+      candle.high >= stop
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 
@@ -359,7 +489,7 @@ export function detectLeg2(
     spike.direction;
 
   const impulse =
-    getImpulseRange(
+    getImpulse(
       candles,
       spike
     );
@@ -372,12 +502,15 @@ export function detectLeg2(
     };
   }
 
+  /*
+   * Step 1:
+   * Find a valid retracement.
+   */
   const pullback =
     findPullback(
       candles,
       spike,
-      impulse.high,
-      impulse.low
+      impulse
     );
 
   if (!pullback) {
@@ -388,6 +521,10 @@ export function detectLeg2(
     };
   }
 
+  /*
+   * Step 2:
+   * Wait for directional confirmation.
+   */
   const confirmation =
     findConfirmation(
       candles,
@@ -396,7 +533,6 @@ export function detectLeg2(
     );
 
   if (!confirmation) {
-
     return {
       direction,
       confirmed: false,
@@ -408,13 +544,16 @@ export function detectLeg2(
     };
   }
 
+  /*
+   * Step 3:
+   * Determine the actual pullback
+   * invalidation level.
+   */
   const stop =
     calculateStop(
       direction,
       candles,
-      pullback.index,
-      impulse.low,
-      impulse.high
+      pullback.index
     );
 
   if (
@@ -432,19 +571,40 @@ export function detectLeg2(
   }
 
   /*
-   * Basic invalidation check.
-   *
-   * LONG:
-   * confirmation must be above stop.
-   *
-   * SHORT:
-   * confirmation must be below stop.
+   * Step 4:
+   * Validate the entire move from
+   * pullback to confirmation.
    */
+  const validConfirmation =
+    confirmationIsValid(
+      direction,
+      candles,
+      pullback.index,
+      confirmation.index,
+      stop
+    );
 
   if (
+    !validConfirmation
+  ) {
+    return {
+      direction,
+      confirmed: false,
+      pullback: true,
+      pullbackIndex:
+        pullback.index,
+      retrace:
+        pullback.retrace,
+    };
+  }
+
+  /*
+   * Step 5:
+   * Final directional sanity check.
+   */
+  if (
     direction === 'LONG' &&
-    confirmation.entry <=
-      stop
+    confirmation.entry <= stop
   ) {
     return {
       direction,
@@ -459,8 +619,7 @@ export function detectLeg2(
 
   if (
     direction === 'SHORT' &&
-    confirmation.entry >=
-      stop
+    confirmation.entry >= stop
   ) {
     return {
       direction,
@@ -475,6 +634,7 @@ export function detectLeg2(
 
   return {
     direction,
+
     confirmed: true,
 
     pullback: true,
