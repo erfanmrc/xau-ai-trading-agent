@@ -88,7 +88,7 @@ export function analyze(
   /*
    * LEG 2 PULLBACK
    */
-  if (leg2?.pullback) {
+  if (leg2?.pullbackIndex != null) {
     score += 15;
 
     reasons.push(
@@ -170,10 +170,10 @@ export function analyze(
   let risk = null;
 
   if (
-    signal !== 'WAIT' &&
-    leg2?.entry != null &&
-    leg2.stopLoss != null
-  ) {
+  signal !== 'WAIT' &&
+  leg2?.entry != null &&
+  leg2.stop != null
+) {
     risk =
       buildRiskPlan(
         signal,
