@@ -11,6 +11,41 @@ import {
   Candle,
 } from '@/lib/strategy/types';
 
+function parseTime(
+  value: unknown
+): number {
+  if (
+    typeof value === 'number' &&
+    Number.isFinite(value)
+  ) {
+    return value;
+  }
+
+  if (
+    typeof value === 'string'
+  ) {
+    const numeric =
+      Number(value);
+
+    if (
+      Number.isFinite(numeric)
+    ) {
+      return numeric;
+    }
+
+    const parsed =
+      Date.parse(value);
+
+    if (
+      Number.isFinite(parsed)
+    ) {
+      return parsed;
+    }
+  }
+
+  return NaN;
+}
+
 export async function GET() {
   return NextResponse.json({
     ok: true,
@@ -75,7 +110,7 @@ export async function POST(
 
             return {
               time:
-                Number(
+                parseTime(
                   item.time
                 ),
 
@@ -141,7 +176,7 @@ export async function POST(
           ok: false,
 
           error:
-            'At least 30 candles are required',
+            'At least 30 valid candles are required',
         },
         {
           status: 400,
