@@ -49,13 +49,21 @@ export interface Spike {
 export interface Leg2 {
   direction?: Direction;
 
+  confirmed: boolean;
+
   pullback?: boolean;
 
-  confirmed: boolean;
+  pullbackIndex?: number;
+
+  confirmationIndex?: number;
 
   entry?: number | null;
 
+  stop?: number | null;
+
   stopLoss?: number | null;
+
+  retrace?: number;
 }
 
 export interface RiskPlan {
