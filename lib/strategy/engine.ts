@@ -2,17 +2,15 @@ import {
   Candle,
   Direction,
   MarketState,
-  Signal,
-  StrategyConfig,
   StrategyResult,
   StrategyScores,
   Structure,
   Setup,
-  RiskPlan,
 } from './types';
 
 import {
   CONFIG,
+  StrategyConfig,
 } from './config';
 
 import {
