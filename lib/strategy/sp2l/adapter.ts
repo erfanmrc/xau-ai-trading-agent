@@ -1,99 +1,150 @@
-export interface StrategyConfig {
-  structureLookback: number;
-  swingStrength: number;
+import {
+  Candle,
+  MarketContext,
+  StrategySignal,
+} from '../types';
 
-  spike: {
-    minStrongCandles: number;
-    bodyToRangeMin: number;
-    directionalCloseMin: number;
-    expansionVsMedian: number;
-    maxBars: number;
-  };
+import {
+  detectSpike,
+} from '../spike';
 
-  imbalance: {
-    minGapATR: number;
-  };
+import {
+  detectLeg2,
+} from '../leg2';
 
-  pullback: {
-    minRetrace: number;
-    maxRetrace: number;
-    maxBarsAfterSpike: number;
-  };
+import {
+  buildRiskPlan,
+} from '../risk';
 
-  confirmation: {
-    minBodyToRange: number;
-    closeInDirection: number;
-  };
+import {
+  StrategyDetector,
+} from '../strategy-contract';
 
-  scoring: {
-    minimumSignal: number;
-    strongSignal: number;
-  };
+import {
+  CONFIG,
+} from '../config';
 
-  risk: {
-    defaultRiskPercent: number;
-    maxRiskPercent: number;
-    maxCombinedRiskPercent: number;
-    targetRR: number;
-    minRR: number;
-    maxRR: number;
-    x2Enabled: boolean;
-    x2VolumeMultiplier: number;
-  };
+export class SP2LDetector
+  implements StrategyDetector {
+
+  readonly name = 'SP2L' as const;
+
+  analyze(
+    candles: Candle[],
+    context: MarketContext
+  ): StrategySignal {
+
+    const spike =
+      detectSpike(candles);
+
+    if (!spike) {
+      return {
+        strategy: 'SP2L',
+        status: 'INVALID',
+        direction: null,
+        score: 0,
+        entry: null,
+        stopLoss: null,
+        takeProfit: null,
+        risk: null,
+        reasons: [
+          'No valid SP2L spike detected',
+        ],
+        warnings: [],
+      };
+    }
+
+    const leg2 =
+      detectLeg2(
+        candles,
+        spike
+      );
+
+    if (
+      !leg2 ||
+      !leg2.confirmed ||
+      leg2.entry == null ||
+      leg2.stop == null
+    ) {
+      return {
+        strategy: 'SP2L',
+        status: 'WATCH',
+        direction: spike.direction,
+        score: spike.score,
+        entry: null,
+        stopLoss: null,
+        takeProfit: null,
+        risk: null,
+        reasons: [
+          'SP2L spike detected',
+          'Leg2 confirmation is not complete',
+        ],
+        warnings: [],
+      };
+    }
+
+    const risk =
+      buildRiskPlan(
+        leg2.direction,
+        leg2.entry,
+        leg2.stop,
+        0,
+        CONFIG
+      );
+
+    if (!risk.tradable) {
+      return {
+        strategy: 'SP2L',
+        status: 'INVALID',
+        direction: leg2.direction,
+        score: spike.score,
+        entry: leg2.entry,
+        stopLoss: leg2.stop,
+        takeProfit: risk.takeProfit,
+        risk,
+        reasons: [
+          'SP2L setup detected',
+          'Risk plan rejected the setup',
+        ],
+        warnings: [
+          risk.noTradeReason ??
+            'Risk constraints failed',
+        ],
+      };
+    }
+
+    let score = spike.score;
+
+    if (
+      context.structureAlignment
+    ) {
+      score += 10;
+    }
+
+    score = Math.min(
+      100,
+      score
+    );
+
+    return {
+      strategy: 'SP2L',
+      status: 'VALID',
+      direction: leg2.direction,
+      score,
+      entry: leg2.entry,
+      stopLoss: leg2.stop,
+      takeProfit: risk.takeProfit,
+      risk,
+      reasons: [
+        'SP2L spike confirmed',
+        'Leg2 confirmation completed',
+        ...(context.structureAlignment
+          ? [
+              'Multi-timeframe structure aligned',
+            ]
+          : []),
+      ],
+      warnings: [],
+    };
+  }
 }
-
-export const DEFAULT_CONFIG: StrategyConfig = {
-  structureLookback: 80,
-
-  swingStrength: 2,
-
-  spike: {
-    minStrongCandles: 3,
-    bodyToRangeMin: 0.55,
-    directionalCloseMin: 0.65,
-    expansionVsMedian: 1.15,
-    maxBars: 6,
-  },
-
-  imbalance: {
-    minGapATR: 0.08,
-  },
-
-  pullback: {
-    minRetrace: 0.25,
-    maxRetrace: 0.70,
-    maxBarsAfterSpike: 10,
-  },
-
-  confirmation: {
-    minBodyToRange: 0.45,
-    closeInDirection: 0.60,
-  },
-
-  scoring: {
-    minimumSignal: 70,
-    strongSignal: 82,
-  },
-
-  risk: {
-    defaultRiskPercent: 0.5,
-    maxRiskPercent: 1.0,
-    maxCombinedRiskPercent: 1.0,
-    targetRR: 2.0,
-    minRR: 1.5,
-    maxRR: 3.5,
-    x2Enabled: true,
-    x2VolumeMultiplier: 2,
-  },
-};
-
-/*
- * Backward compatibility
- *
- * structure.ts, spike.ts and leg2.ts هنوز از CONFIG
- * استفاده می‌کنند. بنابراین فعلاً CONFIG را به عنوان
- * alias برای DEFAULT_CONFIG نگه می‌داریم.
- *
- * هیچ وابستگی به balance یا account size وجود ندارد.
- */
-export const CONFIG = DEFAULT_CONFIG;
