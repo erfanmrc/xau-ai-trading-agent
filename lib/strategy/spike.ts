@@ -1,245 +1,435 @@
-import {
-  CONFIG,
-} from './config';
-
-import {
-  atr,
-  bodyRatio,
-  closeLocation,
-  dir,
-  medianRange,
-} from './math';
-
+import { CONFIG } from './config';
 import {
   Candle,
   Direction,
   Spike,
 } from './types';
 
-function fvg(
+import {
+  bodyRatio,
+  closeLocation,
+  dir,
+  medianRange,
+  atr,
+} from './math';
+
+
+function hasImbalance(
   candles: Candle[],
-  index: number,
+  startIndex: number,
+  endIndex: number,
   direction: Direction
 ): boolean {
-  if (
-    index < 2
-  ) {
-    return false;
-  }
-
-  const gap =
-    direction ===
-    'LONG'
-      ? candles[index]
-          .low -
-        candles[index - 2]
-          .high
-      : candles[index - 2]
-          .low -
-        candles[index]
-          .high;
-
-  if (
-    gap <= 0
-  ) {
-    return false;
-  }
 
   const atrValue =
     atr(
-      candles.slice(
-        0,
-        index + 1
-      ),
-      CONFIG.imbalance
-        .atrLength
+      candles,
+      CONFIG.imbalance.atrLength
     );
 
-  return (
-    gap >=
+  if (
+    !Number.isFinite(atrValue) ||
+    atrValue <= 0
+  ) {
+    return false;
+  }
+
+  const minGap =
     atrValue *
-      CONFIG.imbalance
-        .minGapATR
-  );
+    CONFIG.imbalance.minGapATR;
+
+  for (
+    let i = startIndex;
+    i < endIndex;
+    i++
+  ) {
+
+    const current =
+      candles[i];
+
+    const next =
+      candles[i + 1];
+
+    if (
+      !current ||
+      !next
+    ) {
+      continue;
+    }
+
+    // Bullish FVG:
+    // current high < next low
+    if (
+      direction === 'LONG' &&
+      next.low -
+        current.high >=
+        minGap
+    ) {
+      return true;
+    }
+
+    // Bearish FVG:
+    // current low > next high
+    if (
+      direction === 'SHORT' &&
+      current.low -
+        next.high >=
+        minGap
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
+
+
+function isStrongCandle(
+  candle: Candle,
+  direction: Direction
+): boolean {
+
+  const candleDirection =
+    dir(candle);
+
+  if (
+    candleDirection !==
+    direction
+  ) {
+    return false;
+  }
+
+  const ratio =
+    bodyRatio(candle);
+
+  if (
+    ratio <
+    CONFIG.spike.bodyToRangeMin
+  ) {
+    return false;
+  }
+
+  const location =
+    closeLocation(candle);
+
+  if (
+    direction === 'LONG' &&
+    location <
+      CONFIG.spike.closeLocationMin
+  ) {
+    return false;
+  }
+
+  if (
+    direction === 'SHORT' &&
+    location >
+      1 -
+        CONFIG.spike.closeLocationMin
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+
+function getSpikeDirection(
+  candles: Candle[],
+  startIndex: number,
+  endIndex: number
+): Direction | null {
+
+  let longCount = 0;
+  let shortCount = 0;
+
+  for (
+    let i = startIndex;
+    i <= endIndex;
+    i++
+  ) {
+
+    const direction =
+      dir(candles[i]);
+
+    if (
+      direction === 'LONG'
+    ) {
+      longCount++;
+    }
+
+    if (
+      direction === 'SHORT'
+    ) {
+      shortCount++;
+    }
+  }
+
+  if (
+    longCount >=
+    CONFIG.spike.minStrongCandles
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    shortCount >=
+    CONFIG.spike.minStrongCandles
+  ) {
+    return 'SHORT';
+  }
+
+  return null;
+}
+
 
 export function detectSpike(
   candles: Candle[]
 ): Spike | null {
-  const end =
-    candles.length - 1;
+
+  const minimumCandles =
+    CONFIG.spike.minStrongCandles;
 
   if (
-    end <
-    CONFIG.spike
-      .minStrongCandles -
-      1
+    candles.length <
+    minimumCandles
   ) {
     return null;
   }
 
-  const startLimit =
+  const maxBars =
+    CONFIG.spike.maxBars;
+
+  const startSearch =
     Math.max(
       0,
-      end -
-        CONFIG.spike
-          .maxBars +
-        1
+      candles.length -
+        maxBars
     );
 
-  const historical =
-    candles.slice(
-      0,
-      end
-    );
-
-  const median =
-    medianRange(
-      historical,
-      20
-    ) || 1;
+  /*
+   * We search backward from the
+   * latest completed candle.
+   *
+   * The goal is to find a sequence
+   * of at least 3 strong candles
+   * moving in the same direction.
+   */
 
   for (
-    let i = end;
-    i >= startLimit;
-    i -= 1
+    let endIndex =
+      candles.length - 1;
+    endIndex >=
+      startSearch;
+    endIndex--
   ) {
-    for (
-      const direction of [
-        'LONG',
-        'SHORT',
-      ] as Direction[]
-    ) {
-      let count = 0;
 
-      let first = i;
+    for (
+      let count =
+        minimumCandles;
+      count <=
+        Math.min(
+          maxBars,
+          endIndex + 1
+        );
+      count++
+    ) {
+
+      const startIndex =
+        endIndex -
+        count +
+        1;
+
+      if (
+        startIndex < 0
+      ) {
+        continue;
+      }
+
+      const direction =
+        getSpikeDirection(
+          candles,
+          startIndex,
+          endIndex
+        );
+
+      if (!direction) {
+        continue;
+      }
+
+      /*
+       * Every candle in the impulse
+       * must satisfy the strong-candle
+       * requirements.
+       */
+
+      let allStrong = true;
 
       for (
-        let j = i;
-        j >=
-          Math.max(
-            0,
-            i -
-              CONFIG.spike
-                .maxBars +
-              1
-          );
-        j -= 1
+        let i = startIndex;
+        i <= endIndex;
+        i++
       ) {
-        const sameDirection =
-          dir(
-            candles[j]
-          ) === direction;
-
-        const bodyOk =
-          bodyRatio(
-            candles[j]
-          ) >=
-          CONFIG.spike
-            .bodyToRangeMin;
-
-        const closeOk =
-          direction ===
-          'LONG'
-            ? closeLocation(
-                candles[j]
-              ) >=
-              CONFIG.spike
-                .closeLocationMin
-            : closeLocation(
-                candles[j]
-              ) <=
-              1 -
-                CONFIG.spike
-                  .closeLocationMin;
 
         if (
-          !sameDirection ||
-          !bodyOk ||
-          !closeOk
+          !isStrongCandle(
+            candles[i],
+            direction
+          )
         ) {
+          allStrong = false;
           break;
         }
+      }
 
-        count += 1;
+      if (!allStrong) {
+        continue;
+      }
 
-        first = j;
+      /*
+       * Expansion:
+       *
+       * Compare the average range of
+       * the detected impulse with the
+       * recent median candle range.
+       */
+
+      const impulseRanges =
+        candles
+          .slice(
+            startIndex,
+            endIndex + 1
+          )
+          .map(
+            candle =>
+              candle.high -
+              candle.low
+          );
+
+      const impulseRange =
+        impulseRanges.reduce(
+          (
+            sum,
+            value
+          ) =>
+            sum + value,
+          0
+        ) /
+        impulseRanges.length;
+
+      const referenceRange =
+        medianRange(
+          candles,
+          20
+        );
+
+      if (
+        !Number.isFinite(
+          referenceRange
+        ) ||
+        referenceRange <= 0
+      ) {
+        continue;
+      }
+
+      const expansion =
+        impulseRange /
+        referenceRange;
+
+      /*
+       * IMPORTANT:
+       *
+       * Expansion is a mandatory
+       * qualification condition.
+       *
+       * Previously the engine could
+       * score a spike even when this
+       * requirement failed.
+       */
+
+      if (
+        expansion <
+        CONFIG.spike.expansionVsMedian
+      ) {
+        continue;
+      }
+
+      /*
+       * Imbalance / FVG validation.
+       */
+
+      const imbalance =
+        hasImbalance(
+          candles,
+          startIndex,
+          endIndex,
+          direction
+        );
+
+      /*
+       * For now imbalance is not made
+       * absolutely mandatory at this
+       * layer. It contributes to the
+       * quality score.
+       *
+       * This keeps the detector flexible
+       * until the exact SP2L source rules
+       * are validated through backtesting.
+       */
+
+      let score = 0;
+
+      score += 30;
+
+      if (
+        expansion >=
+        CONFIG.spike.expansionVsMedian
+      ) {
+        score += 25;
+      }
+
+      if (
+        expansion >=
+        CONFIG.spike.expansionVsMedian *
+          1.25
+      ) {
+        score += 10;
+      }
+
+      if (
+        imbalance
+      ) {
+        score += 20;
       }
 
       if (
         count >=
-        CONFIG.spike
-          .minStrongCandles
+        minimumCandles + 1
       ) {
-        const expansion =
-          candles
-            .slice(
-              first,
-              i + 1
-            )
-            .reduce(
-              (
-                sum,
-                candle
-              ) =>
-                sum +
-                (
-                  candle.high -
-                  candle.low
-                ),
-              0
-            ) /
-          count /
-          median;
-
-        const imbalance =
-          fvg(
-            candles,
-            i,
-            direction
-          );
-
-        const score =
-          Math.min(
-            100,
-
-            40 +
-              count * 10 +
-
-              (
-                expansion >=
-                CONFIG.spike
-                  .expansionVsMedian
-                  ? 20
-                  : 0
-              ) +
-
-              (
-                imbalance
-                  ? 20
-                  : 0
-              )
-          );
-
-        return {
-          direction,
-
-          startIndex:
-            first,
-
-          endIndex:
-            i,
-
-          strongCandles:
-            count,
-
-          expansion,
-
-          imbalance,
-
-          score,
-        };
+        score += 10;
       }
+
+      score =
+        Math.min(
+          100,
+          score
+        );
+
+      return {
+        direction,
+
+        startIndex,
+
+        endIndex,
+
+        strongCandles:
+          count,
+
+        expansion,
+
+        imbalance,
+
+        score,
+      };
     }
   }
 
