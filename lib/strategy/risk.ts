@@ -4,194 +4,445 @@ import {
 } from './types';
 
 import {
+  CONFIG,
   StrategyConfig,
 } from './config';
+
+function roundPrice(
+  value: number,
+  decimals = 2
+): number {
+  const factor =
+    Math.pow(10, decimals);
+
+  return (
+    Math.round(value * factor) /
+    factor
+  );
+}
+
+function isValidNumber(
+  value: number
+): boolean {
+  return (
+    Number.isFinite(value) &&
+    value > 0
+  );
+}
+
+function getDirectionDistance(
+  direction: Direction,
+  entry: number,
+  stopLoss: number
+): number {
+  if (
+    direction === 'LONG'
+  ) {
+    return entry - stopLoss;
+  }
+
+  return stopLoss - entry;
+}
+
+function calculateX2Entry(
+  direction: Direction,
+  entry: number,
+  stopLoss: number
+): number {
+  /*
+   * X2 is exactly halfway between X1 entry
+   * and the common stop.
+   *
+   * LONG:
+   * Entry > X2 > SL
+   *
+   * SHORT:
+   * Entry < X2 < SL
+   */
+
+  return roundPrice(
+    (entry + stopLoss) / 2
+  );
+}
+
+function calculateTakeProfit(
+  direction: Direction,
+  entry: number,
+  stopDistance: number,
+  rr: number
+): number {
+  if (
+    direction === 'LONG'
+  ) {
+    return roundPrice(
+      entry +
+      stopDistance * rr
+    );
+  }
+
+  return roundPrice(
+    entry -
+    stopDistance * rr
+  );
+}
+
+function validateDirection(
+  direction: Direction,
+  entry: number,
+  stopLoss: number
+): boolean {
+  if (
+    direction === 'LONG'
+  ) {
+    return stopLoss < entry;
+  }
+
+  return stopLoss > entry;
+}
+
+function calculateRR(
+  direction: Direction,
+  entry: number,
+  stopLoss: number,
+  takeProfit: number
+): number {
+  const stopDistance =
+    Math.abs(
+      entry - stopLoss
+    );
+
+  if (
+    stopDistance <= 0
+  ) {
+    return 0;
+  }
+
+  const reward =
+    direction === 'LONG'
+      ? takeProfit - entry
+      : entry - takeProfit;
+
+  if (
+    reward <= 0
+  ) {
+    return 0;
+  }
+
+  return reward / stopDistance;
+}
 
 export function buildRiskPlan(
   direction: Direction,
   entry: number,
   stopLoss: number,
-  spread: number,
-  config: StrategyConfig
+  spread = 0,
+  config:
+    | StrategyConfig
+    | typeof CONFIG =
+      CONFIG
 ): RiskPlan {
-  const riskPercent =
-    config.risk
-      .defaultRiskPercent;
-
-  const rawDistance =
-    Math.abs(
-      entry -
-      stopLoss
-    );
-
-  const effectiveDistance =
-    rawDistance +
-    Math.max(
-      0,
-      spread
-    );
+  /*
+   * ------------------------------------------------
+   * 1. Basic validation
+   * ------------------------------------------------
+   */
 
   if (
-    !Number.isFinite(
-      entry
-    ) ||
-    !Number.isFinite(
-      stopLoss
-    ) ||
-    rawDistance <= 0
+    !isValidNumber(entry) ||
+    !isValidNumber(stopLoss)
   ) {
     return {
-      riskPercent,
+      riskPercent:
+        config.risk.defaultRiskPercent,
 
       rr: 0,
 
       entry,
-
       stopLoss,
-
       takeProfit: entry,
 
       stopDistance: 0,
 
       x2Enabled: false,
-
       x2Entry: null,
 
       x2RiskPercent: null,
-
-      combinedRiskPercent:
-        null,
+      combinedRiskPercent: null,
 
       tradable: false,
 
       noTradeReason:
-        'Invalid entry or stop distance',
+        'Invalid entry or stop loss',
     };
   }
 
   if (
-    riskPercent <= 0 ||
-    riskPercent >
-      config.risk
-        .maxRiskPercent
+    !validateDirection(
+      direction,
+      entry,
+      stopLoss
+    )
   ) {
     return {
-      riskPercent,
+      riskPercent:
+        config.risk.defaultRiskPercent,
 
       rr: 0,
 
       entry,
-
       stopLoss,
-
       takeProfit: entry,
 
-      stopDistance:
-        effectiveDistance,
+      stopDistance: 0,
 
       x2Enabled: false,
-
       x2Entry: null,
 
       x2RiskPercent: null,
-
-      combinedRiskPercent:
-        null,
+      combinedRiskPercent: null,
 
       tradable: false,
 
       noTradeReason:
-        'Configured risk percentage is outside the allowed range',
+        'Stop loss is on the wrong side of entry',
     };
   }
+
+  /*
+   * ------------------------------------------------
+   * 2. Spread
+   * ------------------------------------------------
+   *
+   * Spread is added conservatively to the
+   * effective risk distance.
+   */
+
+  const safeSpread =
+    Number.isFinite(spread) &&
+    spread > 0
+      ? spread
+      : 0;
+
+  const rawStopDistance =
+    Math.abs(
+      entry - stopLoss
+    );
+
+  const effectiveStopDistance =
+    rawStopDistance +
+    safeSpread;
+
+  if (
+    effectiveStopDistance <= 0
+  ) {
+    return {
+      riskPercent:
+        config.risk.defaultRiskPercent,
+
+      rr: 0,
+
+      entry,
+      stopLoss,
+      takeProfit: entry,
+
+      stopDistance: 0,
+
+      x2Enabled: false,
+      x2Entry: null,
+
+      x2RiskPercent: null,
+      combinedRiskPercent: null,
+
+      tradable: false,
+
+      noTradeReason:
+        'Invalid stop distance',
+    };
+  }
+
+  /*
+   * ------------------------------------------------
+   * 3. Risk percentage
+   * ------------------------------------------------
+   */
+
+  const riskPercent =
+    Math.min(
+      config.risk.defaultRiskPercent,
+      config.risk.maxRiskPercent
+    );
+
+  /*
+   * ------------------------------------------------
+   * 4. RR
+   * ------------------------------------------------
+   *
+   * Keep RR inside the configured range.
+   */
 
   const rr =
     Math.max(
       config.risk.minRR,
-
       Math.min(
         config.risk.targetRR,
         config.risk.maxRR
       )
     );
 
+  /*
+   * ------------------------------------------------
+   * 5. Take Profit
+   * ------------------------------------------------
+   */
+
   const takeProfit =
-    direction === 'LONG'
-      ? entry +
-        effectiveDistance *
-          rr
-      : entry -
-        effectiveDistance *
-          rr;
+    calculateTakeProfit(
+      direction,
+      entry,
+      effectiveStopDistance,
+      rr
+    );
+
+  const actualRR =
+    calculateRR(
+      direction,
+      entry,
+      stopLoss,
+      takeProfit
+    );
+
+  /*
+   * ------------------------------------------------
+   * 6. X2
+   * ------------------------------------------------
+   */
 
   let x2Enabled =
     false;
 
   let x2Entry:
-    number | null =
-    null;
+    | number
+    | null = null;
 
   let x2RiskPercent:
-    number | null =
-    null;
+    | number
+    | null = null;
 
   let combinedRiskPercent:
-    number | null =
-    null;
+    | number
+    | null = null;
 
   if (
     config.risk.x2Enabled
   ) {
-    x2Entry =
-      direction ===
-      'LONG'
-        ? entry -
-          rawDistance / 2
-        : entry +
-          rawDistance / 2;
+    const candidateX2 =
+      calculateX2Entry(
+        direction,
+        entry,
+        stopLoss
+      );
 
-    x2RiskPercent =
-      riskPercent;
+    const x2Distance =
+      Math.abs(
+        candidateX2 -
+        stopLoss
+      );
 
-    combinedRiskPercent =
+    /*
+     * Because X2 uses 2x X1 volume and its
+     * distance to the common SL is approximately
+     * half of X1's distance:
+     *
+     * X2 risk ≈ X1 risk.
+     */
+
+    const estimatedX2Risk =
+      riskPercent *
+      (
+        (
+          x2Distance /
+          rawStopDistance
+        ) *
+        config.risk.x2VolumeMultiplier
+      );
+
+    const estimatedCombinedRisk =
       riskPercent +
-      x2RiskPercent;
+      estimatedX2Risk;
 
     if (
-      combinedRiskPercent <=
-      config.risk
-        .maxCombinedRiskPercent
+      x2Distance > 0 &&
+      estimatedCombinedRisk <=
+        config.risk.maxCombinedRiskPercent
     ) {
       x2Enabled =
         true;
-    } else {
-      x2Enabled =
-        false;
 
       x2Entry =
-        null;
+        candidateX2;
 
       x2RiskPercent =
-        null;
+        Math.round(
+          estimatedX2Risk * 100
+        ) / 100;
 
       combinedRiskPercent =
-        riskPercent;
+        Math.round(
+          estimatedCombinedRisk * 100
+        ) / 100;
     }
+  }
+
+  /*
+   * ------------------------------------------------
+   * 7. Final validation
+   * ------------------------------------------------
+   */
+
+  if (
+    actualRR <
+    config.risk.minRR
+  ) {
+    return {
+      riskPercent,
+      rr: actualRR,
+
+      entry,
+      stopLoss,
+      takeProfit,
+
+      stopDistance:
+        effectiveStopDistance,
+
+      x2Enabled: false,
+      x2Entry: null,
+
+      x2RiskPercent: null,
+      combinedRiskPercent: null,
+
+      tradable: false,
+
+      noTradeReason:
+        `RR ${actualRR.toFixed(2)} is below minimum ${config.risk.minRR}`,
+    };
   }
 
   return {
     riskPercent,
 
-    rr,
+    rr:
+      Math.round(
+        actualRR * 100
+      ) / 100,
 
     entry,
-
     stopLoss,
-
     takeProfit,
 
     stopDistance:
-      effectiveDistance,
+      roundPrice(
+        effectiveStopDistance
+      ),
 
     x2Enabled,
 
