@@ -11,6 +11,11 @@ import {
   Candle,
 } from '@/lib/strategy/types';
 
+import {
+  getXauUsdCandles,
+} from '@/data/twelve-data';
+
+
 function parseTime(
   value: unknown
 ): number {
@@ -46,42 +51,200 @@ function parseTime(
   return NaN;
 }
 
-export async function GET() {
-  return NextResponse.json({
-    ok: true,
 
-    endpoint:
-      '/api/strategy/analyze',
+function normalizeCandles(
+  rawCandles: unknown
+): Candle[] {
+  if (
+    !Array.isArray(rawCandles)
+  ) {
+    return [];
+  }
 
-    method:
-      'POST',
+  return rawCandles
 
-    body: {
-      candles:
-        'Candle[]',
+    .map(
+      (value: unknown) => {
+        const item =
+          value as Record<
+            string,
+            unknown
+          >;
 
-      timeframe:
-        'M1|M5',
+        return {
+          time:
+            parseTime(
+              item.time
+            ),
 
-      spread:
-        'number?',
-    },
+          open:
+            Number(
+              item.open
+            ),
 
-    riskModel: {
-      balanceIndependent:
-        true,
+          high:
+            Number(
+              item.high
+            ),
 
-      defaultRiskPercent:
-        0.5,
+          low:
+            Number(
+              item.low
+            ),
 
-      maxRiskPercent:
-        1,
+          close:
+            Number(
+              item.close
+            ),
 
-      maxCombinedRiskPercent:
-        1,
-    },
-  });
+          volume:
+            item.volume ==
+            null
+              ? undefined
+              : Number(
+                  item.volume
+                ),
+        } satisfies Candle;
+      }
+    )
+
+    .filter(
+      (candle: Candle) =>
+        [
+          candle.time,
+          candle.open,
+          candle.high,
+          candle.low,
+          candle.close,
+        ].every(
+          Number.isFinite
+        )
+    )
+
+    .sort(
+      (
+        a: Candle,
+        b: Candle
+      ) =>
+        a.time -
+        b.time
+    );
 }
+
+
+export async function GET(
+  req: NextRequest
+) {
+  try {
+    const {
+      searchParams,
+    } = new URL(
+      req.url
+    );
+
+    const timeframe:
+      | 'M1'
+      | 'M5' =
+        searchParams.get(
+          'timeframe'
+        ) === 'M5'
+          ? 'M5'
+          : 'M1';
+
+    const requestedSize =
+      Number(
+        searchParams.get(
+          'outputsize'
+        ) || '100'
+      );
+
+    const outputsize =
+      Number.isInteger(
+        requestedSize
+      ) &&
+      requestedSize >= 30 &&
+      requestedSize <= 5000
+        ? requestedSize
+        : 100;
+
+    const interval =
+      timeframe === 'M5'
+        ? '5min'
+        : '1min';
+
+    const rawCandles =
+      await getXauUsdCandles(
+        interval,
+        outputsize
+      );
+
+    const candles =
+      normalizeCandles(
+        rawCandles
+      );
+
+    if (
+      candles.length <
+      30
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          error:
+            'Not enough valid market candles',
+
+          count:
+            candles.length,
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const result =
+      analyze(
+        candles,
+        timeframe,
+        0
+      );
+
+    return NextResponse.json({
+      ok: true,
+
+      source:
+        'Twelve Data',
+
+      symbol:
+        'XAUUSD',
+
+      timeframe,
+
+      count:
+        candles.length,
+
+      candles,
+
+      result,
+    });
+  } catch (e) {
+    return NextResponse.json(
+      {
+        ok: false,
+
+        error:
+          e instanceof Error
+            ? e.message
+            : 'Strategy analysis error',
+      },
+      {
+        status: 500,
+      }
+    );
+  }
+}
+
 
 export async function POST(
   req: NextRequest
@@ -90,82 +253,10 @@ export async function POST(
     const body =
       await req.json();
 
-    const rawCandles =
-      Array.isArray(
-        body.candles
-      )
-        ? body.candles
-        : [];
-
     const candles =
-      rawCandles
-
-        .map(
-          (value: unknown) => {
-            const item =
-              value as Record<
-                string,
-                unknown
-              >;
-
-            return {
-              time:
-                parseTime(
-                  item.time
-                ),
-
-              open:
-                Number(
-                  item.open
-                ),
-
-              high:
-                Number(
-                  item.high
-                ),
-
-              low:
-                Number(
-                  item.low
-                ),
-
-              close:
-                Number(
-                  item.close
-                ),
-
-              volume:
-                item.volume ==
-                null
-                  ? undefined
-                  : Number(
-                      item.volume
-                    ),
-            } satisfies Candle;
-          }
-        )
-
-        .filter(
-          (candle: Candle) =>
-            [
-              candle.time,
-              candle.open,
-              candle.high,
-              candle.low,
-              candle.close,
-            ].every(
-              Number.isFinite
-            )
-        )
-
-        .sort(
-          (
-            a: Candle,
-            b: Candle
-          ) =>
-            a.time -
-            b.time
-        );
+      normalizeCandles(
+        body.candles
+      );
 
     if (
       candles.length <
@@ -177,6 +268,9 @@ export async function POST(
 
           error:
             'At least 30 valid candles are required',
+
+          count:
+            candles.length,
         },
         {
           status: 400,
@@ -216,13 +310,15 @@ export async function POST(
 
       result,
     });
-  } catch {
+  } catch (e) {
     return NextResponse.json(
       {
         ok: false,
 
         error:
-          'Invalid request body',
+          e instanceof Error
+            ? e.message
+            : 'Invalid request body',
       },
       {
         status: 400,
