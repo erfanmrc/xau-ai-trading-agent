@@ -1,5 +1,5 @@
 import { Candle,StrategyResult } from './types'; import { detectStructure } from './structure'; import { detectSpike } from './spike'; import { detectLeg2 } from './leg2'; import { buildRisk } from './risk'; import { CONFIG } from './config';
-export function analyze(candles:Candle[],timeframe='M1',balance=CONFIG.risk.balance,spread=0):StrategyResult{
+export function analyze(candles:Candle[],timeframe='M1',balance=number.risk.balance,spread=0):StrategyResult{
  const structure=detectStructure(candles), spike=detectSpike(candles); const reasons:string[]=[];const warnings:string[]=[];let score=0;
  if(spike){score+=25;reasons.push(`${spike.direction} spike: ${spike.strongCandles} strong candles`);if(spike.imbalance){score+=15;reasons.push('3-candle imbalance/FVG detected')}}
  if(spike&&((spike.direction==='LONG'&&structure.state==='UPTREND')||(spike.direction==='SHORT'&&structure.state==='DOWNTREND'))){score+=20;reasons.push('Spike aligned with market structure')}
