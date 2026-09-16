@@ -1,99 +1,273 @@
-export interface StrategyConfig {
-  structureLookback: number;
-  swingStrength: number;
+import {
+  Candle,
+  MarketContext,
+  StrategySignal,
+} from '../types';
 
-  spike: {
-    minStrongCandles: number;
-    bodyToRangeMin: number;
-    directionalCloseMin: number;
-    expansionVsMedian: number;
-    maxBars: number;
-  };
+import {
+  StrategyDetector,
+} from '../strategy-contract';
 
-  imbalance: {
-    minGapATR: number;
-  };
+import {
+  buildRiskPlan,
+} from '../risk';
 
-  pullback: {
-    minRetrace: number;
-    maxRetrace: number;
-    maxBarsAfterSpike: number;
-  };
+import {
+  CONFIG,
+} from '../config';
 
-  confirmation: {
-    minBodyToRange: number;
-    closeInDirection: number;
-  };
+function bodyRatio(
+  candle: Candle
+): number {
+  const range =
+    candle.high - candle.low;
 
-  scoring: {
-    minimumSignal: number;
-    strongSignal: number;
-  };
+  if (range <= 0) {
+    return 0;
+  }
 
-  risk: {
-    defaultRiskPercent: number;
-    maxRiskPercent: number;
-    maxCombinedRiskPercent: number;
-    targetRR: number;
-    minRR: number;
-    maxRR: number;
-    x2Enabled: boolean;
-    x2VolumeMultiplier: number;
-  };
+  return (
+    Math.abs(
+      candle.close - candle.open
+    ) / range
+  );
 }
 
-export const DEFAULT_CONFIG: StrategyConfig = {
-  structureLookback: 80,
+function isBullish(
+  candle: Candle
+): boolean {
+  return candle.close > candle.open;
+}
 
-  swingStrength: 2,
+function isBearish(
+  candle: Candle
+): boolean {
+  return candle.close < candle.open;
+}
 
-  spike: {
-    minStrongCandles: 3,
-    bodyToRangeMin: 0.55,
-    directionalCloseMin: 0.65,
-    expansionVsMedian: 1.15,
-    maxBars: 6,
-  },
+export class BTBDetector
+  implements StrategyDetector {
 
-  imbalance: {
-    minGapATR: 0.08,
-  },
+  readonly name = 'PRO_BTB' as const;
 
-  pullback: {
-    minRetrace: 0.25,
-    maxRetrace: 0.70,
-    maxBarsAfterSpike: 10,
-  },
+  analyze(
+    candles: Candle[],
+    context: MarketContext
+  ): StrategySignal {
 
-  confirmation: {
-    minBodyToRange: 0.45,
-    closeInDirection: 0.60,
-  },
+    if (candles.length < 20) {
+      return {
+        strategy: 'PRO_BTB',
+        status: 'INVALID',
+        direction: null,
+        score: 0,
+        entry: null,
+        stopLoss: null,
+        takeProfit: null,
+        risk: null,
+        reasons: [
+          'Insufficient candles for BTB',
+        ],
+        warnings: [],
+      };
+    }
 
-  scoring: {
-    minimumSignal: 70,
-    strongSignal: 82,
-  },
+    const recent =
+      candles.slice(-20);
 
-  risk: {
-    defaultRiskPercent: 0.5,
-    maxRiskPercent: 1.0,
-    maxCombinedRiskPercent: 1.0,
-    targetRR: 2.0,
-    minRR: 1.5,
-    maxRR: 3.5,
-    x2Enabled: true,
-    x2VolumeMultiplier: 2,
-  },
-};
+    const current =
+      recent[recent.length - 1];
 
-/*
- * Backward compatibility
- *
- * structure.ts, spike.ts and leg2.ts هنوز از CONFIG
- * استفاده می‌کنند. بنابراین فعلاً CONFIG را به عنوان
- * alias برای DEFAULT_CONFIG نگه می‌داریم.
- *
- * هیچ وابستگی به balance یا account size وجود ندارد.
- */
-export const CONFIG = DEFAULT_CONFIG;
+    const previous =
+      recent[recent.length - 2];
+
+    const rangeHigh =
+      Math.max(
+        ...recent
+          .slice(0, -3)
+          .map(c => c.high)
+      );
+
+    const rangeLow =
+      Math.min(
+        ...recent
+          .slice(0, -3)
+          .map(c => c.low)
+      );
+
+    /*
+     * Bullish BTB:
+     *
+     * 1. Break above structure
+     * 2. Return/retest
+     * 3. Break back upward
+     */
+
+    const bullishBreak =
+      previous.close > rangeHigh;
+
+    const bullishRetest =
+      current.low <= rangeHigh &&
+      current.close > rangeHigh;
+
+    if (
+      bullishBreak &&
+      bullishRetest &&
+      isBullish(current) &&
+      bodyRatio(current) >=
+        CONFIG.confirmation.minBodyToRange
+    ) {
+      const entry =
+        current.close;
+
+      const stop =
+        Math.min(
+          current.low,
+          rangeHigh
+        );
+
+      const risk =
+        buildRiskPlan(
+          'LONG',
+          entry,
+          stop,
+          0,
+          CONFIG
+        );
+
+      if (risk.tradable) {
+        return {
+          strategy: 'PRO_BTB',
+          status: 'VALID',
+          direction: 'LONG',
+          score: context.structureAlignment
+            ? 88
+            : 78,
+          entry,
+          stopLoss: stop,
+          takeProfit: risk.takeProfit,
+          risk,
+          reasons: [
+            'Bullish break detected',
+            'Breakout retest detected',
+            'Bullish confirmation candle',
+          ],
+          warnings: [],
+        };
+      }
+    }
+
+    /*
+     * Bearish BTB
+     */
+
+    const bearishBreak =
+      previous.close < rangeLow;
+
+    const bearishRetest =
+      current.high >= rangeLow &&
+      current.close < rangeLow;
+
+    if (
+      bearishBreak &&
+      bearishRetest &&
+      isBearish(current) &&
+      bodyRatio(current) >=
+        CONFIG.confirmation.minBodyToRange
+    ) {
+      const entry =
+        current.close;
+
+      const stop =
+        Math.max(
+          current.high,
+          rangeLow
+        );
+
+      const risk =
+        buildRiskPlan(
+          'SHORT',
+          entry,
+          stop,
+          0,
+          CONFIG
+        );
+
+      if (risk.tradable) {
+        return {
+          strategy: 'PRO_BTB',
+          status: 'VALID',
+          direction: 'SHORT',
+          score: context.structureAlignment
+            ? 88
+            : 78,
+          entry,
+          stopLoss: stop,
+          takeProfit: risk.takeProfit,
+          risk,
+          reasons: [
+            'Bearish break detected',
+            'Breakout retest detected',
+            'Bearish confirmation candle',
+          ],
+          warnings: [],
+        };
+      }
+    }
+
+    /*
+     * Watch state:
+     * Price is interacting with a liquidity/
+     * imbalance area but confirmation
+     * is incomplete.
+     */
+
+    const nearLiquidity =
+      context.liquidity.buySide.some(
+        level =>
+          Math.abs(
+            current.close - level
+          ) <= current.close * 0.0005
+      ) ||
+      context.liquidity.sellSide.some(
+        level =>
+          Math.abs(
+            current.close - level
+          ) <= current.close * 0.0005
+      );
+
+    if (nearLiquidity) {
+      return {
+        strategy: 'PRO_BTB',
+        status: 'WATCH',
+        direction:
+          context.trend,
+        score: 55,
+        entry: null,
+        stopLoss: null,
+        takeProfit: null,
+        risk: null,
+        reasons: [
+          'Price is near a liquidity level',
+          'BTB confirmation not completed',
+        ],
+        warnings: [],
+      };
+    }
+
+    return {
+      strategy: 'PRO_BTB',
+      status: 'INVALID',
+      direction: null,
+      score: 0,
+      entry: null,
+      stopLoss: null,
+      takeProfit: null,
+      risk: null,
+      reasons: [
+        'No valid BTB setup',
+      ],
+      warnings: [],
+    };
+  }
+}
