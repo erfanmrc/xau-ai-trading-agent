@@ -1,24 +1,41 @@
-import { CONFIG, StrategyConfig } from './config';
-
 import {
   Candle,
   Direction,
   MarketState,
+  Signal,
+  StrategyConfig,
   StrategyResult,
+  StrategyScores,
+  Structure,
+  Setup,
+  RiskPlan,
 } from './types';
 
-import { detectStructure } from './structure';
-import { detectSpike } from './spike';
-import { detectLeg2 } from './leg2';
-import { buildRiskPlan } from './risk';
+import {
+  CONFIG,
+} from './config';
 
+import {
+  detectStructure,
+} from './structure';
 
-interface MultiTimeframeResult {
+import {
+  detectSpike,
+} from './spike';
+
+import {
+  detectLeg2,
+} from './leg2';
+
+import {
+  buildRiskPlan,
+} from './risk';
+
+export interface MultiTimeframeResult {
   m5: StrategyResult;
   m1: StrategyResult;
   final: StrategyResult;
 }
-
 
 function oppositeDirection(
   direction: Direction
@@ -28,326 +45,560 @@ function oppositeDirection(
     : 'LONG';
 }
 
+function clamp(
+  value: number,
+  min = 0,
+  max = 100
+): number {
+  return Math.max(
+    min,
+    Math.min(max, value)
+  );
+}
 
 function scoreM5Context(
-  state: MarketState
+  structure: Structure
 ): number {
-
   if (
-    state === 'UPTREND' ||
-    state === 'DOWNTREND'
+    structure.state === 'UPTREND' ||
+    structure.state === 'DOWNTREND'
   ) {
-    return 20;
+    const quality =
+      structure.structureQuality ?? 0;
+
+    return clamp(
+      Math.round(
+        60 +
+        quality * 0.4
+      )
+    );
   }
 
   if (
-    state === 'RANGE'
+    structure.state === 'RANGE'
   ) {
-    return 5;
+    return 25;
+  }
+
+  return 10;
+}
+
+function scoreStructure(
+  structure: Structure
+): number {
+  const quality =
+    structure.structureQuality ?? 0;
+
+  if (
+    structure.state === 'UPTREND' ||
+    structure.state === 'DOWNTREND'
+  ) {
+    return clamp(
+      Math.round(
+        quality
+      )
+    );
+  }
+
+  if (
+    structure.state === 'RANGE'
+  ) {
+    return 30;
+  }
+
+  return 15;
+}
+
+function scoreSpike(
+  result: StrategyResult
+): number {
+  if (!result.setup.spike) {
+    return 0;
+  }
+
+  return clamp(
+    result.setup.spike.score
+  );
+}
+
+function scorePullback(
+  result: StrategyResult
+): number {
+  const leg2 =
+    result.setup.leg2;
+
+  if (!leg2) {
+    return 0;
+  }
+
+  if (
+    !leg2.pullback
+  ) {
+    return 0;
+  }
+
+  const retrace =
+    leg2.retrace ?? 0;
+
+  if (
+    retrace >= 0.25 &&
+    retrace <= 0.70
+  ) {
+    /*
+     * Middle retracement area is preferred.
+     */
+    const distanceFromIdeal =
+      Math.abs(
+        retrace - 0.50
+      );
+
+    return clamp(
+      Math.round(
+        100 -
+        distanceFromIdeal * 150
+      )
+    );
+  }
+
+  return 20;
+}
+
+function scoreConfirmation(
+  result: StrategyResult
+): number {
+  const leg2 =
+    result.setup.leg2;
+
+  if (!leg2) {
+    return 0;
+  }
+
+  if (
+    leg2.confirmed
+  ) {
+    return 100;
+  }
+
+  if (
+    leg2.pullback
+  ) {
+    return 35;
   }
 
   return 0;
 }
 
-
-function scoreM1Setup(
-  m1: StrategyResult
+function scoreAlignment(
+  m5State: MarketState,
+  m1State: MarketState,
+  spikeDirection:
+    | Direction
+    | null
 ): number {
+  if (!spikeDirection) {
+    return 0;
+  }
 
-  let score = 0;
+  const m5Direction:
+    | Direction
+    | null =
+    m5State === 'UPTREND'
+      ? 'LONG'
+      : m5State === 'DOWNTREND'
+        ? 'SHORT'
+        : null;
 
-  if (
-    m1.market_state === 'UPTREND' ||
-    m1.market_state === 'DOWNTREND'
-  ) {
-    score += 20;
+  if (!m5Direction) {
+    return 0;
   }
 
   if (
-    m1.setup.spike
+    spikeDirection !==
+    m5Direction
   ) {
-    score += 25;
+    return 0;
   }
 
   if (
-    m1.setup.spike?.imbalance
+    m1State === 'UPTREND' &&
+    spikeDirection === 'LONG'
   ) {
-    score += 10;
+    return 100;
   }
 
   if (
-    m1.setup.leg2?.pullback
+    m1State === 'DOWNTREND' &&
+    spikeDirection === 'SHORT'
   ) {
-    score += 15;
+    return 100;
   }
 
-  if (
-    m1.setup.leg2?.confirmed
-  ) {
-    score += 20;
-  }
-
-  if (
-    m1.setup.spike &&
-    (
-      m1.market_state === 'UPTREND' &&
-      m1.setup.spike.direction === 'LONG'
-    ) ||
-    (
-      m1.market_state === 'DOWNTREND' &&
-      m1.setup.spike?.direction === 'SHORT'
-    )
-  ) {
-    score += 10;
-  }
-
-  return Math.min(
-    100,
-    score
-  );
+  /*
+   * M1 can be temporarily neutral during a
+   * pullback while still being aligned with M5.
+   */
+  return 65;
 }
 
-
-function emptyResult(
-  timeframe: 'M1' | 'M5',
-  candles: Candle[]
-): StrategyResult {
+function buildScores(
+  result: StrategyResult,
+  m5State?: MarketState
+): StrategyScores {
+  const context =
+    m5State
+      ? scoreM5Context(
+          result.structure
+        )
+      : 0;
 
   const structure =
-    detectStructure(candles);
+    scoreStructure(
+      result.structure
+    );
+
+  const spike =
+    scoreSpike(result);
+
+  const pullback =
+    scorePullback(result);
+
+  const confirmation =
+    scoreConfirmation(result);
+
+  let alignment = 0;
+
+  if (
+    m5State
+  ) {
+    alignment =
+      scoreAlignment(
+        m5State,
+        result.market_state,
+        result.setup.spike?.direction ??
+          null
+      );
+  } else {
+    alignment =
+      result.market_state ===
+      'UPTREND' ||
+      result.market_state ===
+      'DOWNTREND'
+        ? 100
+        : 0;
+  }
+
+  /*
+   * Setup score:
+   *
+   * Structure 20%
+   * Spike 25%
+   * Pullback 20%
+   * Confirmation 25%
+   * Alignment 10%
+   */
+  const setup =
+    Math.round(
+      structure * 0.20 +
+      spike * 0.25 +
+      pullback * 0.20 +
+      confirmation * 0.25 +
+      alignment * 0.10
+    );
+
+  const final =
+    m5State
+      ? Math.round(
+          context * 0.30 +
+          setup * 0.70
+        )
+      : setup;
 
   return {
+    context,
+    structure,
+    spike,
+    pullback,
+    confirmation,
+    alignment,
+    setup,
+    final,
+  };
+}
+
+function emptySetup(): Setup {
+  return {
+    type: 'NONE',
+    spike: null,
+    leg2: null,
+    entry: null,
+    stop_loss: null,
+    take_profit: null,
+  };
+}
+
+function createBaseResult(
+  timeframe: 'M1' | 'M5',
+  structure: Structure
+): StrategyResult {
+  return {
     symbol: 'XAUUSD',
+
     timeframe,
+
     signal: 'WAIT',
+
     quality_score: 0,
+
+    scores: {
+      context: 0,
+      structure: 0,
+      spike: 0,
+      pullback: 0,
+      confirmation: 0,
+      alignment: 0,
+      setup: 0,
+      final: 0,
+    },
+
     market_state:
       structure.state,
+
     structure,
-    setup: {
-      type: 'NONE',
-      spike: null,
-      leg2: null,
-      entry: null,
-      stop_loss: null,
-      take_profit: null,
-    },
+
+    setup:
+      emptySetup(),
+
     risk: null,
+
     reasons: [],
+
     warnings: [],
+
     invalidation: null,
   };
 }
 
-
 export function analyze(
   candles: Candle[],
-  timeframe: 'M1' | 'M5' = 'M1',
+  timeframe:
+    | 'M1'
+    | 'M5',
   spread = 0,
-  config: StrategyConfig = CONFIG
+  config:
+    | StrategyConfig
+    | typeof CONFIG =
+      CONFIG
 ): StrategyResult {
+  const structure =
+    detectStructure(
+      candles
+    );
+
+  const result =
+    createBaseResult(
+      timeframe,
+      structure
+    );
+
+  const reasons =
+    result.reasons;
+
+  const warnings =
+    result.warnings;
 
   if (
     candles.length < 30
   ) {
-    return emptyResult(
-      timeframe,
-      candles
+    warnings.push(
+      'Insufficient candle history'
+    );
+
+    return result;
+  }
+
+  reasons.push(
+    `Market state: ${structure.state}`
+  );
+
+  if (
+    structure.breakout !== 'NONE'
+  ) {
+    reasons.push(
+      `BOS: ${structure.breakout}`
     );
   }
 
-  const structure =
-    detectStructure(candles);
-
   const spike =
-    detectSpike(candles);
+    detectSpike(
+      candles,
+      config
+    );
+
+  result.setup.spike =
+    spike;
+
+  if (!spike) {
+    reasons.push(
+      'No qualified spike'
+    );
+  } else {
+    reasons.push(
+      `Spike ${spike.direction} score=${spike.score}`
+    );
+
+    if (
+      !spike.imbalance
+    ) {
+      warnings.push(
+        'Spike has no detected imbalance'
+      );
+    }
+  }
 
   const leg2 =
     spike
       ? detectLeg2(
           candles,
-          spike
+          spike,
+          config
         )
       : null;
 
-  const result: StrategyResult = {
-    symbol: 'XAUUSD',
+  result.setup.leg2 =
+    leg2;
 
-    timeframe,
-
-    signal: 'WAIT',
-
-    quality_score: 0,
-
-    market_state:
-      structure.state,
-
-    structure,
-
-    setup: {
-      type:
-        spike
-          ? 'SP2L'
-          : 'NONE',
-
-      spike,
-
-      leg2,
-
-      entry:
-        leg2?.confirmed
-          ? leg2.entry ?? null
-          : null,
-
-      stop_loss:
-        leg2?.confirmed
-          ? leg2.stop ?? null
-          : null,
-
-      take_profit:
-        null,
-    },
-
-    risk: null,
-
-    reasons: [
-      `Market structure: ${structure.state}`,
-    ],
-
-    warnings: [],
-
-    invalidation: null,
-  };
-
-  const qualityScore =
-    scoreM1Setup(result);
-
-  result.quality_score =
-    qualityScore;
-
-  if (spike) {
-    result.reasons.push(
-      `Qualified ${spike.direction} spike detected`
+  if (!leg2) {
+    reasons.push(
+      'No valid Leg2 setup'
     );
-  }
-
-  if (
-    leg2?.pullback
+  } else if (
+    leg2.pullback &&
+    !leg2.confirmed
   ) {
-    result.reasons.push(
-      'Leg 2 pullback detected'
+    reasons.push(
+      'Valid pullback but confirmation is missing'
     );
   }
 
   if (
-    leg2?.confirmed
-  ) {
-    result.reasons.push(
-      'Leg 2 confirmation detected'
-    );
-  }
-
-  if (
-    spike &&
-    (
-      (
-        structure.state === 'UPTREND' &&
-        spike.direction === 'LONG'
-      ) ||
-      (
-        structure.state === 'DOWNTREND' &&
-        spike.direction === 'SHORT'
-      )
-    )
-  ) {
-    result.reasons.push(
-      'Spike direction aligned with structure'
-    );
-  }
-
-  if (
-    spike &&
-    structure.state !== 'RANGE' &&
-    (
-      (
-        structure.state === 'UPTREND' &&
-        spike.direction !== 'LONG'
-      ) ||
-      (
-        structure.state === 'DOWNTREND' &&
-        spike.direction !== 'SHORT'
-      )
-    )
-  ) {
-    result.warnings.push(
-      'Spike direction is not aligned with current structure'
-    );
-  }
-
-  /*
-   * Entry can only be created after
-   * complete M1 confirmation.
-   */
-
-  if (
-    spike &&
     leg2?.confirmed &&
     leg2.entry != null &&
     leg2.stop != null
   ) {
+    result.setup.type =
+      'SP2L';
 
-    const aligned =
-      (
-        structure.state === 'UPTREND' &&
-        spike.direction === 'LONG'
-      ) ||
-      (
-        structure.state === 'DOWNTREND' &&
-        spike.direction === 'SHORT'
+    result.setup.entry =
+      leg2.entry;
+
+    result.setup.stop_loss =
+      leg2.stop;
+
+    const direction =
+      leg2.direction;
+
+    const risk =
+      buildRiskPlan(
+        direction,
+        leg2.entry,
+        leg2.stop,
+        spread,
+        config
       );
 
-    if (aligned) {
+    result.risk =
+      risk;
 
-      const risk =
-        buildRiskPlan(
-          spike.direction,
-          leg2.entry,
-          leg2.stop,
-          spread,
-          config
-        );
+    result.setup.take_profit =
+      risk.takeProfit;
 
-      result.risk =
-        risk;
+    result.invalidation =
+      risk.stopLoss;
 
-      result.setup.take_profit =
-        risk.takeProfit;
-
-      if (
-        risk.tradable
-      ) {
-        result.signal =
-          spike.direction;
-      } else {
-        result.warnings.push(
-          risk.noTradeReason ||
-            'Risk rules rejected the setup'
-        );
-      }
+    if (
+      risk.tradable
+    ) {
+      reasons.push(
+        `Risk plan valid: RR=${risk.rr.toFixed(2)}`
+      );
+    } else {
+      warnings.push(
+        risk.noTradeReason ??
+          'Risk plan rejected'
+      );
     }
+  }
+
+  const scores =
+    buildScores(
+      result
+    );
+
+  result.scores =
+    scores;
+
+  result.quality_score =
+    scores.final;
+
+  /*
+   * Single timeframe signal.
+   *
+   * We still require:
+   * 1. directional structure
+   * 2. spike
+   * 3. Leg2 confirmation
+   * 4. structure/spike alignment
+   * 5. valid risk plan
+   */
+  const directionalStructure =
+    structure.state === 'UPTREND'
+      ? 'LONG'
+      : structure.state === 'DOWNTREND'
+        ? 'SHORT'
+        : null;
+
+  const setupDirection =
+    spike?.direction ??
+    leg2?.direction ??
+    null;
+
+  const aligned =
+    directionalStructure !== null &&
+    setupDirection !== null &&
+    directionalStructure ===
+      setupDirection;
+
+  if (
+    spike &&
+    leg2?.confirmed &&
+    aligned &&
+    result.risk?.tradable
+  ) {
+    result.signal =
+      setupDirection === 'LONG'
+        ? 'LONG'
+        : 'SHORT';
+
+    reasons.push(
+      `Signal ${result.signal} confirmed`
+    );
+  } else {
+    result.signal =
+      'WAIT';
   }
 
   return result;
 }
 
-
 export function analyzeMultiTimeframe(
   m5Candles: Candle[],
   m1Candles: Candle[],
   spread = 0,
-  config: StrategyConfig = CONFIG
+  config:
+    | StrategyConfig
+    | typeof CONFIG =
+      CONFIG
 ): MultiTimeframeResult {
-
   const m5 =
     analyze(
       m5Candles,
@@ -364,55 +615,41 @@ export function analyzeMultiTimeframe(
       config
     );
 
-  const final: StrategyResult = {
-    ...m1,
-
-    signal: 'WAIT',
-
-    quality_score: 0,
-
-    risk: null,
-
-    reasons: [
-      `M5 market context: ${m5.market_state}`,
-      `M1 market state: ${m1.market_state}`,
-    ],
-
-    warnings: [
-      ...m1.warnings,
-    ],
-
-    setup: {
-      ...m1.setup,
-    },
-
-    invalidation:
-      m1.invalidation,
-  };
-
-  /*
-   * M5 directional context.
-   */
-
   const m5Direction:
     | Direction
     | null =
-      m5.market_state ===
-        'UPTREND'
-        ? 'LONG'
-        : m5.market_state ===
-          'DOWNTREND'
-          ? 'SHORT'
-          : null;
+    m5.market_state ===
+    'UPTREND'
+      ? 'LONG'
+      : m5.market_state ===
+        'DOWNTREND'
+        ? 'SHORT'
+        : null;
 
-  if (!m5Direction) {
+  const m1SpikeDirection =
+    m1.setup.spike?.direction ??
+    null;
 
-    final.quality_score =
-      Math.round(
-        m1.quality_score *
-        0.5
-      );
+  const finalStructure =
+    m1.structure;
 
+  const final =
+    createBaseResult(
+      'M1',
+      finalStructure
+    );
+
+  final.reasons.push(
+    `M5 market context: ${m5.market_state}`
+  );
+
+  final.reasons.push(
+    `M1 market state: ${m1.market_state}`
+  );
+
+  if (
+    m5Direction === null
+  ) {
     final.reasons.push(
       'M5 does not provide a clear directional context'
     );
@@ -420,6 +657,15 @@ export function analyzeMultiTimeframe(
     final.warnings.push(
       'No M5 directional bias'
     );
+
+    final.scores =
+      buildScores(
+        m1,
+        m5.market_state
+      );
+
+    final.quality_score =
+      final.scores.final;
 
     return {
       m5,
@@ -432,156 +678,131 @@ export function analyzeMultiTimeframe(
     `M5 directional bias: ${m5Direction}`
   );
 
-  /*
-   * M1 must contain a valid SP2L
-   * in the same direction as M5.
-   */
-
-  const m1Spike =
-    m1.setup.spike;
-
-  if (!m1Spike) {
-
-    final.quality_score =
-      Math.round(
-        m1.quality_score *
-        0.7
-      );
-
-    final.reasons.push(
-      'No qualified M1 SP2L spike'
-    );
-
-    return {
-      m5,
-      m1,
-      final,
-    };
-  }
-
   if (
-    m1Spike.direction !==
-    m5Direction
+    m1SpikeDirection === null
   ) {
-
-    final.quality_score =
-      Math.round(
-        m1.quality_score *
-        0.6
-      );
-
     final.reasons.push(
-      `M1 ${m1Spike.direction} setup conflicts with M5 ${m5Direction} context`
+      'M1 has no qualified spike'
     );
 
     final.warnings.push(
-      'M1/M5 direction mismatch'
+      'No M1 spike'
+    );
+  }
+
+  const spikeAligned =
+    m1SpikeDirection ===
+    m5Direction;
+
+  if (
+    m1SpikeDirection &&
+    !spikeAligned
+  ) {
+    final.reasons.push(
+      `M1 spike ${m1SpikeDirection} conflicts with M5 ${m5Direction}`
     );
 
-    return {
-      m5,
-      m1,
-      final,
-    };
+    final.warnings.push(
+      'M1/M5 directional conflict'
+    );
+  }
+
+  const leg2 =
+    m1.setup.leg2;
+
+  const confirmed =
+    !!leg2?.confirmed;
+
+  if (
+    confirmed
+  ) {
+    final.reasons.push(
+      'M1 Leg2 confirmation detected'
+    );
+  } else {
+    final.reasons.push(
+      'M1 Leg2 confirmation is missing'
+    );
   }
 
   /*
-   * M5 and M1 are aligned.
+   * Copy the complete M1 setup into final result.
    */
+  final.setup = {
+    ...m1.setup,
+  };
 
-  final.reasons.push(
-    'M5/M1 direction aligned'
-  );
-
-  /*
-   * Add context quality to M1 setup.
-   */
-
-  const contextScore =
-    scoreM5Context(
+  const scores =
+    buildScores(
+      m1,
       m5.market_state
     );
 
-  final.quality_score =
-    Math.min(
-      100,
-      Math.round(
-        (
-          m1.quality_score * 0.8
-        ) +
-        (
-          contextScore
-        )
-      )
-    );
+  final.scores =
+    scores;
 
-  /*
-   * Confirmation is mandatory.
-   */
+  final.quality_score =
+    scores.final;
 
   if (
-    !m1.setup.leg2?.confirmed ||
-    m1.setup.entry == null ||
-    m1.setup.stop_loss == null
+    m1.risk
   ) {
+    final.risk =
+      m1.risk;
+  }
+
+  final.invalidation =
+    m1.invalidation;
+
+  const validRisk =
+    !!m1.risk?.tradable;
+
+  const validSetup =
+    !!m1.setup.spike &&
+    !!m1.setup.leg2?.confirmed;
+
+  const validAlignment =
+    spikeAligned;
+
+  if (
+    validSetup &&
+    validAlignment &&
+    validRisk
+  ) {
+    final.signal =
+      m5Direction;
 
     final.reasons.push(
-      'M1 SP2L has no confirmed Leg 2 entry'
+      `MTF signal ${final.signal} confirmed`
     );
+  } else {
+    final.signal =
+      'WAIT';
 
-    return {
-      m5,
-      m1,
-      final,
-    };
+    if (
+      !validSetup
+    ) {
+      final.warnings.push(
+        'M1 setup is not fully confirmed'
+      );
+    }
+
+    if (
+      !validAlignment
+    ) {
+      final.warnings.push(
+        'M1 trigger is not aligned with M5 context'
+      );
+    }
+
+    if (
+      !validRisk
+    ) {
+      final.warnings.push(
+        'Risk plan is not tradable'
+      );
+    }
   }
-
-  /*
-   * Rebuild Risk Plan only after the
-   * M5/M1 direction filter passes.
-   */
-
-  const risk =
-    buildRiskPlan(
-      m1Spike.direction,
-      m1.setup.entry,
-      m1.setup.stop_loss,
-      spread,
-      config
-    );
-
-  final.risk =
-    risk;
-
-  final.setup.take_profit =
-    risk.takeProfit;
-
-  if (
-    !risk.tradable
-  ) {
-
-    final.warnings.push(
-      risk.noTradeReason ||
-        'Risk rules rejected the setup'
-    );
-
-    return {
-      m5,
-      m1,
-      final,
-    };
-  }
-
-  /*
-   * Final signal.
-   */
-
-  final.signal =
-    m1Spike.direction;
-
-  final.reasons.push(
-    `FINAL SIGNAL: ${m1Spike.direction}`
-  );
 
   return {
     m5,
