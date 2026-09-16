@@ -1,17 +1,281 @@
-import { Candle, Structure } from './types';
-import { CONFIG } from './config';
-function isHigh(c:Candle[],i:number,s:number){for(let k=1;k<=s;k++)if(c[i].high<=c[i-k].high||c[i].high<=c[i+k].high)return false;return true}
-function isLow(c:Candle[],i:number,s:number){for(let k=1;k<=s;k++)if(c[i].low>=c[i-k].low||c[i].low>=c[i+k].low)return false;return true}
-export function detectStructure(c:Candle[]):Structure{
- const s=CONFIG.structure.swingStrength, highs:number[]=[],lows:number[]=[];
- for(let i=s;i<c.length-s;i++){if(isHigh(c,i,s))highs.push(c[i].high);if(isLow(c,i,s))lows.push(c[i].low)}
- const hh:number[]=[],lh:number[]=[],hl:number[]=[],ll:number[]=[];
- for(let i=1;i<highs.length;i++)(highs[i]>highs[i-1]?hh:lh).push(highs[i]);
- for(let i=1;i<lows.length;i++)(lows[i]>lows[i-1]?hl:ll).push(lows[i]);
- const lastHigh=highs.at(-1),lastLow=lows.at(-1), close=c.at(-1)!.close;
- const breakout=lastHigh&&close>lastHigh?'LONG':lastLow&&close<lastLow?'SHORT':null;
- let state:Structure['state']='UNCLEAR';
- if(hh.length&&hl.length&&!lh.length)state='UPTREND'; else if(lh.length&&ll.length&&!hh.length)state='DOWNTREND';
- else if((hh.length&&hl.length)||(lh.length&&ll.length))state=breakout==='LONG'?'UPTREND':breakout==='SHORT'?'DOWNTREND':'RANGE';
- return {state,hh,hl,lh,ll,breakout,lastSwingHigh:lastHigh,lastSwingLow:lastLow};
+import {
+  CONFIG,
+} from './config';
+
+import {
+  Candle,
+  Structure,
+} from './types';
+
+function findRecentHigh(
+  candles: Candle[],
+  strength: number
+): number | null {
+  for (
+    let i =
+      candles.length -
+      strength -
+      1;
+
+    i >= strength;
+
+    i -= 1
+  ) {
+    const high =
+      candles[i].high;
+
+    let valid = true;
+
+    for (
+      let k = 1;
+      k <= strength;
+      k += 1
+    ) {
+      if (
+        high <=
+          candles[
+            i - k
+          ].high ||
+        high <=
+          candles[
+            i + k
+          ].high
+      ) {
+        valid = false;
+
+        break;
+      }
+    }
+
+    if (valid) {
+      return high;
+    }
+  }
+
+  return null;
+}
+
+function findRecentLow(
+  candles: Candle[],
+  strength: number
+): number | null {
+  for (
+    let i =
+      candles.length -
+      strength -
+      1;
+
+    i >= strength;
+
+    i -= 1
+  ) {
+    const low =
+      candles[i].low;
+
+    let valid = true;
+
+    for (
+      let k = 1;
+      k <= strength;
+      k += 1
+    ) {
+      if (
+        low >=
+          candles[
+            i - k
+          ].low ||
+        low >=
+          candles[
+            i + k
+          ].low
+      ) {
+        valid = false;
+
+        break;
+      }
+    }
+
+    if (valid) {
+      return low;
+    }
+  }
+
+  return null;
+}
+
+export function detectStructure(
+  candles: Candle[]
+): Structure {
+  const empty: Structure = {
+    state: 'UNCLEAR',
+
+    breakout: 'NONE',
+
+    hh: null,
+
+    hl: null,
+
+    lh: null,
+
+    ll: null,
+  };
+
+  if (
+    candles.length <
+    Math.max(
+      10,
+      CONFIG.swingStrength *
+        2 +
+        5
+    )
+  ) {
+    return empty;
+  }
+
+  const sample =
+    candles.slice(
+      -CONFIG.structureLookback
+    );
+
+  const last =
+    sample[
+      sample.length - 1
+    ];
+
+  const previous =
+    sample[
+      sample.length - 2
+    ];
+
+  const highs =
+    sample.map(
+      (c) => c.high
+    );
+
+  const lows =
+    sample.map(
+      (c) => c.low
+    );
+
+  const history =
+    Math.max(
+      1,
+      sample.length - 5
+    );
+
+  const previousHigh =
+    Math.max(
+      ...highs.slice(
+        0,
+        history
+      )
+    );
+
+  const previousLow =
+    Math.min(
+      ...lows.slice(
+        0,
+        history
+      )
+    );
+
+  let breakout:
+    Structure['breakout'] =
+      'NONE';
+
+  if (
+    last.close >
+    previousHigh
+  ) {
+    breakout =
+      'BULLISH';
+  } else if (
+    last.close <
+    previousLow
+  ) {
+    breakout =
+      'BEARISH';
+  }
+
+  const overallHigh =
+    Math.max(
+      ...highs
+    );
+
+  const overallLow =
+    Math.min(
+      ...lows
+    );
+
+  let state:
+    Structure['state'] =
+    'RANGE';
+
+  if (
+    breakout ===
+    'BULLISH'
+  ) {
+    state =
+      'UPTREND';
+  } else if (
+    breakout ===
+    'BEARISH'
+  ) {
+    state =
+      'DOWNTREND';
+  } else if (
+    last.close >
+      overallHigh
+  ) {
+    state =
+      'UPTREND';
+  } else if (
+    last.close <
+      overallLow
+  ) {
+    state =
+      'DOWNTREND';
+  } else if (
+    previous.close >
+      previous.open &&
+    last.close >=
+      previous.close
+  ) {
+    state =
+      'UPTREND';
+  } else if (
+    previous.close <
+      previous.open &&
+    last.close <=
+      previous.close
+  ) {
+    state =
+      'DOWNTREND';
+  }
+
+  const recentHigh =
+    findRecentHigh(
+      sample,
+      CONFIG.swingStrength
+    );
+
+  const recentLow =
+    findRecentLow(
+      sample,
+      CONFIG.swingStrength
+    );
+
+  return {
+    state,
+
+    breakout,
+
+    hh: recentHigh,
+
+    hl: recentLow,
+
+    lh: recentHigh,
+
+    ll: recentLow,
+  };
 }
