@@ -47,19 +47,15 @@ export interface Spike {
 }
 
 export interface Leg2 {
-  /*
-   * Direction of the original spike.
-   * Required by the existing leg2 detector.
-   */
   direction?: Direction;
 
-  pullback: boolean;
+  pullback?: boolean;
 
   confirmed: boolean;
 
-  entry: number | null;
+  entry?: number | null;
 
-  stopLoss: number | null;
+  stopLoss?: number | null;
 }
 
 export interface RiskPlan {
