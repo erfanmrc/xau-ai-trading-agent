@@ -1,4 +1,4 @@
-# XAU AI Trading Agent — Batch 7: SP2L/BTB/Micro-MAP practical execution
+# XAU AI Trading Agent — Batch 8: SP2L/BTB/Micro-MAP practical execution
 
 ## Core execution model
 - One `VALID` strategy with a complete entry/stop plan is sufficient.
@@ -30,7 +30,7 @@
 - Uses a higher target profile (`4R`) with a minimum RR guard (`3R`).
 - A valid Micro-MAP remains rare by design; the system should not loosen it merely to increase trade count.
 
-## Batch 7 optimizations
+## Batch 8 optimizations
 - X2 is now a deferred add-on: the second position is activated only after price first moves away from Entry 1 and then returns to the midpoint between Entry 1 and the shared stop.
 - The backtest never credits X2 PnL or floating exposure before the X2 trigger is actually touched.
 - BTB confirmation requires a touch/retest plus a decisive rejection close beyond the breakout zone; oversized BTB stops are rejected instead of being rescued by a tiny lot.
@@ -61,3 +61,5 @@ The backtest records every strategy evaluation and reports:
 
 ## Candle backtest caveat
 When the same candle touches both stop and target, the engine resolves the candle conservatively as stop-first because tick ordering is unavailable.
+
+Batch 8 optimization: SP2L requires Leg-2 candle to break the return-candle extreme; BTB M1 uses a two-step retest/rejection sequence and avoids chase entries beyond a zone-distance ATR cap; M5/M1 disagreement is a stronger score penalty, not a hard filter; X2 remains deferred and is not counted until triggered.

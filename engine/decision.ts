@@ -44,9 +44,9 @@ function enrichScore(signal:ReturnType<typeof detectSP2L>, context:ReturnType<ty
   if(m15Relation==='CONFIRM') score+=6;
   if(m15Relation==='OPPOSE') score-=8;
   if(context.m5===d) score+=4;
-  if(context.m5!==d && context.m5!=='NEUTRAL') score-=2;
+  if(context.m5!==d && context.m5!=='NEUTRAL') score-=5;
   if(context.m1===d) score+=6;
-  if(context.m1!==d && context.m1!=='NEUTRAL') score-=3;
+  if(context.m1!==d && context.m1!=='NEUTRAL') score-=5;
   return {score:clamp(score),h1Filter,m15Relation};
 }
 

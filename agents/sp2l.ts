@@ -73,6 +73,13 @@ export function detectSP2L(c:Candle[], balance=C.balance, spread=0):StrategySign
   const returned=dir==='LONG'
     ? pull.low<=lastSpike.high+touchTolerance
     : pull.high>=lastSpike.low-touchTolerance;
+  const pullIsCounter=dir==='LONG' ? candleDirection(pull)==='SHORT' : candleDirection(pull)==='LONG';
+  const pullBreakLevel=dir==='LONG'?pull.high:pull.low;
+  const leg2Break=dir==='LONG'?current.close>pullBreakLevel:current.close<pullBreakLevel;
+  const returnDepth=dir==='LONG'
+    ? Math.max(0,lastSpike.high-pull.low)/Math.max(spikeHigh-spikeLow,1e-9)
+    : Math.max(0,pull.high-lastSpike.low)/Math.max(spikeHigh-spikeLow,1e-9);
+
   if(!returned){
     return {
       strategy:'SP2L',status:'WATCH',score:42+(s.bias===dir?8:0),
@@ -86,12 +93,14 @@ export function detectSP2L(c:Candle[], balance=C.balance, spread=0):StrategySign
   const pullbackDirection=candleDirection(pull);
   const confirmation=candleDirection(current)===dir &&
     bodyRatio(current)>=C.analysis.confirmation.minBodyToRange &&
-    (dir==='LONG'?closeLocation(current)>=C.analysis.confirmation.closeInDirection:closeLocation(current)<=1-C.analysis.confirmation.closeInDirection);
+    (dir==='LONG'?closeLocation(current)>=C.analysis.confirmation.closeInDirection:closeLocation(current)<=1-C.analysis.confirmation.closeInDirection) &&
+    leg2Break &&
+    (pullIsCounter || bodyRatio(pull)<=0.45);
   if(!confirmation){
     return {
       strategy:'SP2L',status:'WATCH',score:52+(pullbackDirection&&pullbackDirection!==dir?5:0)+(s.bias===dir?8:0),
       reason:'SP2L return detected; waiting for Leg-2 stabilization candle',
-      reasons:[`${dir} spike breakout detected`,'Single return candle is sufficient','Leg-2 stabilization/continuation is not confirmed'],
+      reasons:[`${dir} spike breakout detected`,'Single return candle is sufficient',`Return depth ${(returnDepth*100).toFixed(0)}% of spike range`,`Leg-2 candle must break the return-candle extreme`,`Leg-2 stabilization/continuation is not confirmed`],
       warnings:['Entry is intended at the start of Leg-2'],
       direction:dir,trigger:breakoutLevel,zone:null
     };
@@ -114,7 +123,9 @@ export function detectSP2L(c:Candle[], balance=C.balance, spread=0):StrategySign
   const confluence=assessEntryConfluence(c,entry);
   const risk=buildRisk(dir,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,3,true);
   const tightness=stopDistance<=a?8:0;
-  const score=Math.min(100,60+(s.bias===dir?10:0)+(s.breakout===dir?5:0)+tightness+confluence.score+(imbalance===dir?5:0));
+  const triggerBonus=leg2Break?8:0;
+  const structurePenalty=(s.bias!==dir && s.bias!=='NEUTRAL')?6:0;
+  const score=Math.min(100,60+(s.bias===dir?10:0)+(s.breakout===dir?5:0)+tightness+triggerBonus+confluence.score+(imbalance===dir?5:0)-structurePenalty);
   const reasons=[
     `${dir} spike breakout (${spike.length} strong candles)`,
     'Simple return from last spike candle extreme',

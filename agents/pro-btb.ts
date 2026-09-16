@@ -14,14 +14,26 @@ function strengthConfirmation(c:Candle[], z:StrategyZone, direction:'LONG'|'SHOR
   const dirOk=candleDirection(current)===direction;
   const bodyOk=bodyRatio(current)>=C.analysis.confirmation.minBodyToRange;
   const closeOk=direction==='LONG'?closeLocation(current)>=C.analysis.confirmation.closeInDirection:closeLocation(current)<=1-C.analysis.confirmation.closeInDirection;
-  const touch=direction==='LONG'
+  const currentTouch=direction==='LONG'
     ? current.low<=z.high+a*0.08 && current.high>=z.low
     : current.high>=z.low-a*0.08 && current.low<=z.high;
+  const prevTouch=direction==='LONG'
+    ? prev.low<=z.high+a*0.12 && prev.high>=z.low
+    : prev.high>=z.low-a*0.12 && prev.low<=z.high;
   const closeBeyond=direction==='LONG'
     ? current.close>=z.high+a*C.analysis.btb.rejectionCloseATR
     : current.close<=z.low-a*C.analysis.btb.rejectionCloseATR;
   const prevAgainst=direction==='LONG'?prev.close<=prev.open:prev.close>=prev.open;
-  return {ok:dirOk&&bodyOk&&closeOk&&touch&&closeBeyond,dirOk,bodyOk,closeOk,touch,closeBeyond,prevAgainst};
+  const twoStep = C.analysis.btb.requireTwoStepM1Rejection && z.timeframe==='M1'
+    ? (prevTouch && prevAgainst && dirOk && closeBeyond)
+    : (currentTouch && dirOk && closeBeyond);
+  return {ok:twoStep&&bodyOk&&closeOk,dirOk,bodyOk,closeOk,touch:currentTouch||prevTouch,closeBeyond,prevAgainst,twoStep};
+}
+
+
+function directionalZoneDistance(entry:number,z:StrategyZone,direction:'LONG'|'SHORT'){
+  if(direction==='LONG') return Math.max(0,entry-z.high);
+  return Math.max(0,z.low-entry);
 }
 
 export function detectProBTB(c:Candle[], balance=C.balance, spread=0):StrategySignal {
@@ -72,6 +84,16 @@ export function detectProBTB(c:Candle[], balance=C.balance, spread=0):StrategySi
       };
     }
 
+    const distanceFromZone=directionalZoneDistance(entry,z,d);
+    if(distanceFromZone>a*C.analysis.btb.maxEntryFromZoneATR){
+      return {
+        strategy:'PRO_BTB',status:'WATCH',score:55,
+        reason:'BTB confirmation occurred too far from the retest zone',
+        reasons:[`${z.source} rejection confirmed`,`Entry is ${(distanceFromZone/a).toFixed(2)} ATR from the zone`,'Wait for a closer reaction entry'],
+        warnings:['BTB avoids chasing a move after the retest'],
+        direction:d,entry,stop,zone:{low:z.low,high:z.high,source:z.source}
+      };
+    }
     const confluence=assessEntryConfluence(c,entry);
     const risk=buildRisk(d,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,C.targetRR,true);
     const sourceBonus=z.timeframe==='M15'?8:z.timeframe==='M5'?5:0;
