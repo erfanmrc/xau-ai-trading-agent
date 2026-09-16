@@ -1,18 +1,18 @@
-# XAU AI Trading Agent - Fixed Structure
+# XAUUSD Strategy Engine v1
+Drop-in Strategy Engine for a Next.js/TypeScript project.
 
-This version fixes the Vercel error caused by flattening the Next.js folders.
+## Install
+Copy `lib/strategy` into `lib/strategy` and `app/api/strategy/analyze/route.ts` into the matching route. The API assumes the Next.js `@/*` alias points to the project root.
 
-IMPORTANT: upload the extracted project while preserving ALL folders.
+## Test
+GET `/api/strategy/analyze` for endpoint info.
+POST JSON:
+```json
+{"timeframe":"M1","balance":2000,"spread":0.2,"candles":[{"time":1,"open":1,"high":2,"low":0,"close":1.5}]}
+```
+At least 30 candles are required.
 
-Architecture:
-Twelve Data -> Vercel -> Market Engine -> SP2L / PRO BTB / MicroMap -> Risk -> Telegram
+## Important
+The engine is a fixed-rule baseline, not a claim of profitability or >70% win rate. It must be backtested on XAUUSD data with the actual broker's contract size, spread, commission and slippage before use.
 
-The three strategies are independent; confluence is optional.
-
-Required Vercel environment variables:
-TWELVE_DATA_API_KEY
-TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
-CRON_SECRET
-
-Build command: npm run build
+A13 observations to integrate later: ATR-scaled breakout gap, displacement/volume confirmation, pullback retest or inside-bar confirmation, multiple SL engines, MTF EMA filter, session/date filters, consecutive-loss protection, and realistic slippage. The TradingView A13 source is protected, so only its publicly described methodology is used.
