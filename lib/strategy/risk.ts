@@ -1,10 +1,211 @@
-import { CONFIG } from './config'; import { Direction,RiskPlan } from './types'; import { roundPrice } from './math';
-export function buildRisk(direction:Direction,entry:number,stop:number,balance=CONFIG.risk.balance,riskPercent=CONFIG.risk.defaultRiskPercent,spread=0):RiskPlan{
- const warnings:string[]=[];const riskMoney=balance*riskPercent/100;const effectiveStop=direction==='LONG'?entry-stop+spread:stop-entry+spread; if(effectiveStop<=0)return {tradable:false,riskPercent,riskMoney,stopDistance:0,lotSize:null,rr:0,warnings:['Invalid stop distance']};
- const raw=riskMoney/(effectiveStop*CONFIG.risk.contractSize);const lot=Math.floor(raw/CONFIG.risk.lotStep)*CONFIG.risk.lotStep;
- if(lot<CONFIG.risk.minLot){warnings.push('Minimum lot would exceed requested risk; trade blocked.');return {tradable:false,riskPercent,riskMoney,stopDistance:effectiveStop,lotSize:null,rr:0,warnings}}
- const target=direction==='LONG'?entry+effectiveStop*CONFIG.risk.targetRR:entry-effectiveStop*CONFIG.risk.targetRR;
- const x2Entry=(entry+stop)/2;const x2Dist=direction==='LONG'?x2Entry-stop:stop-x2Entry;const x2Lot=Math.floor((riskMoney/(x2Dist*CONFIG.risk.contractSize))*CONFIG.risk.x2VolumeMultiplier/CONFIG.risk.lotStep)*CONFIG.risk.lotStep;const combined=lot*effectiveStop*CONFIG.risk.contractSize/balance*100 + (x2Lot?x2Lot*x2Dist*CONFIG.risk.contractSize/balance*100:0);
- if(combined>CONFIG.risk.maxCombinedRiskPercent){warnings.push('X2 disabled because combined risk cap would be exceeded.');return {tradable:true,riskPercent,riskMoney,stopDistance:effectiveStop,lotSize:lot,takeProfit:roundPrice(target),rr:CONFIG.risk.targetRR,warnings}}
- return {tradable:true,riskPercent,riskMoney,stopDistance:effectiveStop,lotSize:lot,takeProfit:roundPrice(target),rr:CONFIG.risk.targetRR,x2Entry:roundPrice(x2Entry),x2LotSize:x2Lot||undefined,combinedRiskPercent:combined,warnings};
+import { Direction, RiskPlan } from './types';
+import { StrategyConfig } from './config';
+
+export function buildRiskPlan(
+  direction: Direction,
+  entry: number,
+  stopLoss: number,
+  spread: number,
+  config: StrategyConfig
+): RiskPlan {
+  /*
+   * IMPORTANT:
+   * This layer is completely independent from account balance.
+   *
+   * Risk is expressed only as a percentage of account equity.
+   *
+   * Example:
+   * 0.5% risk means:
+   *
+   * $1000 account -> $5 risk
+   * $2000 account -> $10 risk
+   * $10000 account -> $50 risk
+   *
+   * The actual lot size will be calculated later by the
+   * broker/execution layer using the broker's contract specification.
+   */
+
+  const riskPercent = config.risk.defaultRiskPercent;
+
+  const rawDistance = Math.abs(entry - stopLoss);
+
+  if (
+    !Number.isFinite(entry) ||
+    !Number.isFinite(stopLoss) ||
+    rawDistance <= 0
+  ) {
+    return {
+      riskPercent,
+
+      rr: 0,
+
+      entry,
+
+      stopLoss,
+
+      takeProfit: entry,
+
+      stopDistance: 0,
+
+      x2Enabled: false,
+
+      x2Entry: null,
+
+      x2RiskPercent: null,
+
+      combinedRiskPercent: null,
+
+      tradable: false,
+
+      noTradeReason: 'Invalid entry or stop distance',
+    };
+  }
+
+  /*
+   * Spread is added to the effective stop distance.
+   *
+   * This keeps the risk model conservative.
+   */
+
+  const effectiveDistance =
+    rawDistance + Math.max(0, spread);
+
+  /*
+   * Validate risk percentage.
+   */
+
+  if (
+    riskPercent <= 0 ||
+    riskPercent > config.risk.maxRiskPercent
+  ) {
+    return {
+      riskPercent,
+
+      rr: 0,
+
+      entry,
+
+      stopLoss,
+
+      takeProfit: entry,
+
+      stopDistance: effectiveDistance,
+
+      x2Enabled: false,
+
+      x2Entry: null,
+
+      x2RiskPercent: null,
+
+      combinedRiskPercent: null,
+
+      tradable: false,
+
+      noTradeReason:
+        'Configured risk percentage is outside the allowed range',
+    };
+  }
+
+  /*
+   * Keep RR inside configured boundaries.
+   */
+
+  const rr = Math.max(
+    config.risk.minRR,
+    Math.min(
+      config.risk.targetRR,
+      config.risk.maxRR
+    )
+  );
+
+  /*
+   * Calculate TP from entry and effective stop distance.
+   */
+
+  const takeProfit =
+    direction === 'LONG'
+      ? entry + effectiveDistance * rr
+      : entry - effectiveDistance * rr;
+
+  /*
+   * X2 logic:
+   *
+   * X2 is placed approximately at the midpoint between
+   * the original entry and original stop.
+   *
+   * Because the distance to the common SL is approximately
+   * half of X1's distance, X2 can use approximately double
+   * the volume while keeping approximately the same
+   * percentage risk.
+   *
+   * Therefore:
+   *
+   * X1 = 0.5%
+   * X2 = 0.5%
+   * Combined = approximately 1%
+   */
+
+  let x2Enabled = false;
+
+  let x2Entry: number | null = null;
+
+  let x2RiskPercent: number | null = null;
+
+  let combinedRiskPercent: number | null = null;
+
+  if (config.risk.x2Enabled) {
+    x2Entry =
+      direction === 'LONG'
+        ? entry - rawDistance / 2
+        : entry + rawDistance / 2;
+
+    x2RiskPercent = riskPercent;
+
+    combinedRiskPercent =
+      riskPercent + x2RiskPercent;
+
+    /*
+     * X2 is allowed only when combined risk is
+     * within the configured maximum.
+     */
+
+    if (
+      combinedRiskPercent <=
+      config.risk.maxCombinedRiskPercent
+    ) {
+      x2Enabled = true;
+    } else {
+      x2Enabled = false;
+
+      x2Entry = null;
+
+      x2RiskPercent = null;
+
+      combinedRiskPercent = riskPercent;
+    }
+  }
+
+  return {
+    riskPercent,
+
+    rr,
+
+    entry,
+
+    stopLoss,
+
+    takeProfit,
+
+    stopDistance: effectiveDistance,
+
+    x2Enabled,
+
+    x2Entry,
+
+    x2RiskPercent,
+
+    combinedRiskPercent,
+
+    tradable: true,
+  };
 }
