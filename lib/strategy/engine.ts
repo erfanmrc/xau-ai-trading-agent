@@ -25,78 +25,40 @@ import {
   buildRiskPlan,
 } from './risk';
 
-
 export function analyze(
   candles: Candle[],
   timeframe: 'M1' | 'M5' = 'M1',
   spread: number = 0,
   config: StrategyConfig = DEFAULT_CONFIG
 ): StrategyResult {
-
   /*
-   * ============================
-   * MARKET STRUCTURE
-   * ============================
+   * Current detector modules use the shared CONFIG internally.
+   * The config argument is kept here so the Strategy Engine API
+   * is ready for configurable optimization later.
    */
 
   const structure =
-    detectStructure(
-      candles,
-      config
-    );
-
-
-  /*
-   * ============================
-   * SPIKE
-   * ============================
-   */
+    detectStructure(candles);
 
   const spike =
-    detectSpike(
-      candles,
-      config
-    );
-
-
-  /*
-   * ============================
-   * LEG 2
-   * ============================
-   */
+    detectSpike(candles);
 
   const leg2 =
     spike
-      ? detectLeg2(
-          candles,
-          spike,
-          config
-        )
+      ? detectLeg2(candles, spike)
       : null;
-
-
-  /*
-   * ============================
-   * SETUP SCORE
-   * ============================
-   */
 
   let score = 0;
 
   const reasons: string[] = [];
-
   const warnings: string[] = [];
 
-
   /*
-   * Market structure
+   * MARKET STRUCTURE
    */
-
   if (
-    structure.state !==
-    'UNCLEAR'
+    structure.state !== 'UNCLEAR'
   ) {
-
     score += 20;
 
     reasons.push(
@@ -104,26 +66,17 @@ export function analyze(
     );
   }
 
-
   /*
-   * Spike
+   * SPIKE
    */
-
   if (spike) {
-
     score += 25;
 
     reasons.push(
       `Qualified ${spike.direction} spike detected`
     );
 
-
-    /*
-     * Imbalance / FVG
-     */
-
     if (spike.imbalance) {
-
       score += 10;
 
       reasons.push(
@@ -132,13 +85,10 @@ export function analyze(
     }
   }
 
-
   /*
-   * Pullback
+   * LEG 2 PULLBACK
    */
-
   if (leg2?.pullback) {
-
     score += 15;
 
     reasons.push(
@@ -146,13 +96,10 @@ export function analyze(
     );
   }
 
-
   /*
-   * Confirmation
+   * LEG 2 CONFIRMATION
    */
-
   if (leg2?.confirmed) {
-
     score += 20;
 
     reasons.push(
@@ -160,17 +107,12 @@ export function analyze(
     );
   }
 
-
   /*
-   * ============================
    * STRUCTURE ALIGNMENT
-   * ============================
    */
-
   const direction:
     Direction | null =
       spike?.direction ?? null;
-
 
   const aligned =
     !!direction &&
@@ -178,27 +120,21 @@ export function analyze(
       (
         direction === 'LONG' &&
         (
-          structure.state ===
-            'UPTREND' ||
-          structure.breakout ===
-            'BULLISH'
+          structure.state === 'UPTREND' ||
+          structure.breakout === 'BULLISH'
         )
       )
       ||
       (
         direction === 'SHORT' &&
         (
-          structure.state ===
-            'DOWNTREND' ||
-          structure.breakout ===
-            'BEARISH'
+          structure.state === 'DOWNTREND' ||
+          structure.breakout === 'BEARISH'
         )
       )
     );
 
-
   if (aligned) {
-
     score += 10;
 
     reasons.push(
@@ -206,56 +142,38 @@ export function analyze(
     );
 
   } else if (direction) {
-
     warnings.push(
       'Spike direction is not aligned with current structure'
     );
   }
 
-
   /*
-   * ============================
-   * FINAL SIGNAL
-   * ============================
+   * SIGNAL
    */
-
   const signal =
-    score >=
-      config.scoring.minimumSignal &&
+    score >= config.scoring.minimumSignal &&
     !!leg2?.confirmed &&
     aligned
-
       ? (
           direction === 'LONG'
             ? 'LONG'
             : 'SHORT'
         )
-
       : 'WAIT';
 
-
   /*
-   * ============================
    * RISK PLAN
-   * ============================
-   *
-   * IMPORTANT:
    *
    * No account balance is used here.
-   *
-   * Risk is expressed entirely
-   * as a percentage.
+   * Risk is percentage-based only.
    */
-
   let risk = null;
-
 
   if (
     signal !== 'WAIT' &&
     leg2?.entry != null &&
     leg2.stopLoss != null
   ) {
-
     risk =
       buildRiskPlan(
         signal,
@@ -265,9 +183,7 @@ export function analyze(
         config
       );
 
-
     if (!risk.tradable) {
-
       warnings.push(
         risk.noTradeReason ||
         'Risk rules rejected the trade'
@@ -275,15 +191,10 @@ export function analyze(
     }
   }
 
-
   /*
-   * ============================
    * FINAL RESULT
-   * ============================
    */
-
   return {
-
     symbol: 'XAUUSD',
 
     timeframe,
@@ -310,7 +221,6 @@ export function analyze(
     structure,
 
     setup: {
-
       type:
         spike
           ? 'SP2L'
