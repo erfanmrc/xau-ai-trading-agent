@@ -2,7 +2,7 @@ import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { Direction, RiskPlan } from '@/types/market';
 import { roundPrice } from '@/engine/indicators';
 
-export function buildRisk(direction:Direction, entry:number, stop:number, balance=C.balance, riskPercent=C.riskPercent, spread=0): RiskPlan {
+export function buildRisk(direction:Direction, entry:number, stop:number, balance:number=C.balance, riskPercent:number=C.riskPercent, spread:number=0): RiskPlan {
   const warnings:string[]=[];
   const riskMoney=balance*riskPercent/100;
   const effectiveStop=direction==='LONG' ? entry-stop+spread : stop-entry+spread;

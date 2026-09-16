@@ -60,7 +60,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const entryRisk=pipsRisk(entry,stop,chosen.direction);
     if(entryRisk<=0) continue;
     const liveRisk=buildRisk(chosen.direction,entry,stop,balance,cfg.riskPercent,cfg.spread);
-    const tp=chosen.tp1??(entry + (entry-stop)*(chosen.risk?.targetRR??C.targetRR)*(chosen.direction==='LONG'?1:-1));
+    const tp=chosen.tp1??(entry + (entry-stop)*(C.targetRR)*(chosen.direction==='LONG'?1:-1));
     const entry2=cfg.allowX2?liveRisk.x2Entry??null:null;
     const lot2=cfg.allowX2?liveRisk.x2LotSize??0:0;
     open={strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime:(i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].time:c.time),entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp};

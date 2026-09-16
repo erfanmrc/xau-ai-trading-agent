@@ -23,4 +23,4 @@ export const STRATEGY_CONFIG = {
     microMap: { minChannelBars: 3, maxChannelBars: 7, maxPullbackBars: 6, maxTriggerDistanceATR: 1.25 },
     btb: { maxZoneAgeBars: 60, returnWindowBars: 12, minDepartureBars: 2, breakoutLookback: 5 },
   },
-} as const;
+};
