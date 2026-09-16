@@ -32,36 +32,37 @@ export interface Structure {
   hl: number | null;
   lh: number | null;
   ll: number | null;
+
+  structureQuality?: number;
+
+  swingHighs?: number[];
+  swingLows?: number[];
+
+  trendDirection?: Direction | null;
+
+  bos?: boolean;
+  bosDirection?: Direction | null;
 }
 
 export interface Spike {
   direction: Direction;
-
   startIndex: number;
   endIndex: number;
-
   strongCandles: number;
-
   expansion: number;
-
   imbalance: boolean;
-
   score: number;
 }
 
 export interface Leg2 {
   direction: Direction;
-
   confirmed: boolean;
 
   pullback?: boolean;
-
   pullbackIndex?: number;
-
   confirmationIndex?: number;
 
   entry?: number | null;
-
   stop?: number | null;
 
   retrace?: number;
@@ -69,27 +70,20 @@ export interface Leg2 {
 
 export interface RiskPlan {
   riskPercent: number;
-
   rr: number;
 
   entry: number;
-
   stopLoss: number;
-
   takeProfit: number;
 
   stopDistance: number;
 
   x2Enabled: boolean;
-
   x2Entry: number | null;
-
   x2RiskPercent: number | null;
-
   combinedRiskPercent: number | null;
 
   tradable: boolean;
-
   noTradeReason?: string;
 }
 
@@ -99,14 +93,22 @@ export interface Setup {
     | 'NONE';
 
   spike: Spike | null;
-
   leg2: Leg2 | null;
 
   entry: number | null;
-
   stop_loss: number | null;
-
   take_profit: number | null;
+}
+
+export interface StrategyScores {
+  context: number;
+  structure: number;
+  spike: number;
+  pullback: number;
+  confirmation: number;
+  alignment: number;
+  setup: number;
+  final: number;
 }
 
 export interface StrategyResult {
@@ -119,6 +121,8 @@ export interface StrategyResult {
   signal: Signal;
 
   quality_score: number;
+
+  scores?: StrategyScores;
 
   market_state: MarketState;
 
