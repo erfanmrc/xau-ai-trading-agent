@@ -178,7 +178,7 @@ export function analyze(
       buildRiskPlan(
         signal,
         leg2.entry,
-        leg2.stopLoss,
+        leg2.stop,
         spread,
         config
       );
@@ -235,8 +235,8 @@ export function analyze(
         null,
 
       stop_loss:
-        leg2?.stopLoss ??
-        null,
+  leg2?.stop ??
+  null,
 
       take_profit:
         risk?.takeProfit ??
@@ -250,7 +250,7 @@ export function analyze(
     warnings,
 
     invalidation:
-      leg2?.stopLoss ??
-      null,
+  leg2?.stop ??
+  null,
   };
 }
