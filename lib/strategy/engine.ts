@@ -509,19 +509,21 @@ export function analyze(
     result.invalidation =
       risk.stopLoss;
 
-    if (
-      risk.tradable
-    ) {
-      reasons.push(
-        `Risk plan valid: RR=${risk.rr.toFixed(2)}`
-      );
-    } else {
-      warnings.push(
-        risk.noTradeReason ??
-          'Risk plan rejected'
-      );
-    }
+    if (risk.tradable) {
+  reasons.push(
+    `Risk plan valid: RR=${risk.rr.toFixed(2)}`
+  );
+
+  if (risk.x2Enabled) {
+    reasons.push(
+      `X2 enabled at ${risk.x2Entry} with combined risk ${risk.combinedRiskPercent}%`
+    );
+  } else {
+    warnings.push(
+      'X2 disabled because combined risk limit would be exceeded'
+    );
   }
+}
 
   const scores =
     buildScores(
