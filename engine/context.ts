@@ -1,6 +1,7 @@
 import { Candle, MarketContext, MarketBias } from '@/types/market';
 import { resample } from '@/engine/indicators';
 import { summarizeStructure } from '@/engine/market-structure';
+import { buildImportantLevels } from '@/engine/levels';
 
 function latestBias(c: Candle[]): MarketBias { return summarizeStructure(c).bias; }
 function sessionName(iso: string) {
@@ -36,6 +37,6 @@ export function buildContext(m1:Candle[]): MarketContext {
   const long=vals.filter(x=>x==='LONG').length, short=vals.filter(x=>x==='SHORT').length;
   const bias:MarketBias=long>short?'LONG':short>long?'SHORT':'NEUTRAL';
   const aligned=bias!=='NEUTRAL' && vals.every(x=>x===bias);
-  const alignmentScore = (vals.filter(x=>x!=='NEUTRAL' && x===bias).length / vals.length) * 100;
-  return {bias,h1:h1b,m15:m15b,m5:m5b,m1:m1b,alignmentScore,aligned,session:sessionName(m1.at(-1)!.time),liquidity:levels(m1)};
+  const alignmentScore=(vals.filter(x=>x!=='NEUTRAL' && x===bias).length/vals.length)*100;
+  return {bias,h1:h1b,m15:m15b,m5:m5b,m1:m1b,alignmentScore,aligned,session:sessionName(m1.at(-1)!.time),liquidity:levels(m1),importantLevels:buildImportantLevels(m1)};
 }

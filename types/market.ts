@@ -21,6 +21,8 @@ export type StructureSummary = {
   breakout: Direction | null;
 };
 
+export type EntryConfluence = { score:number; labels:string[]; nearest:number|null; distance:number|null; atrReference:number; };
+
 export type StrategySignal = {
   strategy: StrategyName;
   status: SignalStatus;
@@ -37,6 +39,7 @@ export type StrategySignal = {
   trigger?: number | null;
   zone?: { low: number; high: number; source: string } | null;
   risk?: RiskPlan | null;
+  confluence?: EntryConfluence | null;
 };
 
 export type RiskPlan = {
@@ -62,6 +65,7 @@ export type MarketContext = {
   alignmentScore: number;
   aligned: boolean;
   session?: string;
+  importantLevels: {round5:number;round10:number;previousDayMid:number|null;sessionMid:number|null;rangeMid:number|null;ema20M5:number|null;ema50M5:number|null;ema20M15:number|null};
   liquidity: {
     previousDayHigh: number | null;
     previousDayLow: number | null;

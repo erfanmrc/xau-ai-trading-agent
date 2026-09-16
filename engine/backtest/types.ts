@@ -27,9 +27,12 @@ export type BacktestOpportunity={
   m15:'LONG'|'SHORT'|'NEUTRAL';
   m5:'LONG'|'SHORT'|'NEUTRAL';
   m1:'LONG'|'SHORT'|'NEUTRAL';
+  confluenceScore:number;
+  confluenceLabels:string[];
 };
 
 export type BacktestStrategyStats={
+  strategy:StrategyName;
   opportunities:number;
   valid:number;
   watch:number;
@@ -39,19 +42,23 @@ export type BacktestStrategyStats={
   wins:number;
   losses:number;
   pnl:number;
+  totalR:number;
+  avgR:number;
+  winRate:number;
+  profitFactor:number|null;
 };
 
 export type BacktestTrade={
   id:number; strategy:StrategyName; direction:Direction; signalTime:string; entryTime:string; exitTime:string;
   entry:number; exit:number; stop:number; tp:number; lot:number; lot2:number; entry2:number|null;
-  pnl:number; rMultiple:number; outcome:'TP'|'SL'|'EOD';
+  pnl:number; rMultiple:number; plannedRiskPercent:number; outcome:'TP'|'SL'|'EOD';
 };
 
 export type BacktestResult={
   config:BacktestConfig; initialBalance:number; finalBalance:number; netPnl:number; returnPct:number;
   trades:BacktestTrade[]; tradeCount:number; wins:number; losses:number; eod:number; winRate:number;
   grossProfit:number; grossLoss:number; profitFactor:number|null; avgR:number;
-  maxDrawdownPct:number; maxDailyDrawdownPct:number; maxDailyLossDollars:number;
+  maxDrawdownPct:number; maxDailyDrawdownPct:number; maxDailyLossDollars:number; maxDailyRiskUsedPercent:number;
   propRules:{profitTargetPct:number;maxTotalDrawdownPct:number;maxDailyDrawdownPct:number;minTradingDays:number};
   reachedProfitTarget:boolean; breachedMaxDrawdown:boolean; breachedDailyDrawdown:boolean; tradingDays:number; tradingDaySet:string[];
   opportunityCount:number;

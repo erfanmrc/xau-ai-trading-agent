@@ -16,11 +16,11 @@ export const STRATEGY_CONFIG = {
   maxCombinedRiskPercent: 1,
   analysis: {
     minCandles: 30,
-    spike: { minStrongCandles: 3, maxBars: 6, bodyToRangeMin: 0.55, closeLocationMin: 0.65, expansionVsMedian: 1.15 },
+    spike: { minStrongCandles: 3, maxBars: 6, bodyToRangeMin: 0.55, closeLocationMin: 0.65, expansionVsMedian: 1.15, maxExtensionATR: 2.50, maxStopATR: 3.00 },
     imbalance: { minGapATR: 0.08, atrLength: 14 },
-    pullback: { minRetrace: 0.25, maxRetrace: 0.70, maxBarsAfterImpulse: 12 },
+    pullback: { minRetrace: 0.00, maxRetrace: 0.65, maxBarsAfterImpulse: 4 },
     confirmation: { minBodyToRange: 0.45, closeInDirection: 0.60 },
-    microMap: { minChannelBars: 3, maxChannelBars: 7, maxPullbackBars: 6, maxTriggerDistanceATR: 1.25 },
-    btb: { maxZoneAgeBars: 60, returnWindowBars: 12, minDepartureBars: 2, breakoutLookback: 5 },
+    microMap: { minChannelBars: 3, maxChannelBars: 7, maxPullbackBars: 3, maxTriggerDistanceATR: 0.90, maxStopATR: 1.10, targetRR: 4, minRR: 3 },
+    btb: { maxZoneAgeBars: 18, returnWindowBars: 8, minDepartureBars: 3, breakoutLookback: 5, minDepartureATR: 1.0, zonePaddingATR: 0.12, m5Enabled: true, m15Enabled: true },
   },
 };
