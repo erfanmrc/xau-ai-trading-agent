@@ -1,99 +1,150 @@
-export interface StrategyConfig {
-  structureLookback: number;
-  swingStrength: number;
+import {
+  Candle,
+  MarketContext,
+  MarketState,
+  Structure,
+} from '../types';
 
-  spike: {
-    minStrongCandles: number;
-    bodyToRangeMin: number;
-    directionalCloseMin: number;
-    expansionVsMedian: number;
-    maxBars: number;
-  };
+import { buildLiquidityMap } from './liquidity';
 
-  imbalance: {
-    minGapATR: number;
-  };
+function stateDirection(
+  state: MarketState
+): 'LONG' | 'SHORT' | null {
+  if (state === 'UPTREND') {
+    return 'LONG';
+  }
 
-  pullback: {
-    minRetrace: number;
-    maxRetrace: number;
-    maxBarsAfterSpike: number;
-  };
+  if (state === 'DOWNTREND') {
+    return 'SHORT';
+  }
 
-  confirmation: {
-    minBodyToRange: number;
-    closeInDirection: number;
-  };
-
-  scoring: {
-    minimumSignal: number;
-    strongSignal: number;
-  };
-
-  risk: {
-    defaultRiskPercent: number;
-    maxRiskPercent: number;
-    maxCombinedRiskPercent: number;
-    targetRR: number;
-    minRR: number;
-    maxRR: number;
-    x2Enabled: boolean;
-    x2VolumeMultiplier: number;
-  };
+  return null;
 }
 
-export const DEFAULT_CONFIG: StrategyConfig = {
-  structureLookback: 80,
+function calculateVolatility(
+  candles: Candle[]
+): number | null {
+  if (candles.length < 14) {
+    return null;
+  }
 
-  swingStrength: 2,
+  const recent = candles.slice(-14);
 
-  spike: {
-    minStrongCandles: 3,
-    bodyToRangeMin: 0.55,
-    directionalCloseMin: 0.65,
-    expansionVsMedian: 1.15,
-    maxBars: 6,
-  },
+  const ranges = recent.map(
+    candle =>
+      candle.high - candle.low
+  );
 
-  imbalance: {
-    minGapATR: 0.08,
-  },
+  const average =
+    ranges.reduce(
+      (sum, value) => sum + value,
+      0
+    ) / ranges.length;
 
-  pullback: {
-    minRetrace: 0.25,
-    maxRetrace: 0.70,
-    maxBarsAfterSpike: 10,
-  },
+  return average;
+}
 
-  confirmation: {
-    minBodyToRange: 0.45,
-    closeInDirection: 0.60,
-  },
+export function buildMarketContext(
+  htfStructure: Structure,
+  intermediateStructure: Structure,
+  executionStructure: Structure,
+  candles: Candle[]
+): MarketContext {
+  const htfDirection =
+    stateDirection(
+      htfStructure.state
+    );
 
-  scoring: {
-    minimumSignal: 70,
-    strongSignal: 82,
-  },
+  const intermediateDirection =
+    stateDirection(
+      intermediateStructure.state
+    );
 
-  risk: {
-    defaultRiskPercent: 0.5,
-    maxRiskPercent: 1.0,
-    maxCombinedRiskPercent: 1.0,
-    targetRR: 2.0,
-    minRR: 1.5,
-    maxRR: 3.5,
-    x2Enabled: true,
-    x2VolumeMultiplier: 2,
-  },
-};
+  const executionDirection =
+    stateDirection(
+      executionStructure.state
+    );
 
-/*
- * Backward compatibility
- *
- * structure.ts, spike.ts and leg2.ts هنوز از CONFIG
- * استفاده می‌کنند. بنابراین فعلاً CONFIG را به عنوان
- * alias برای DEFAULT_CONFIG نگه می‌داریم.
- *
- * هیچ وابستگی به balance یا account size وجود ندارد.
- */
-export const CONFIG = DEFAULT_CONFIG;
+  const directions = [
+    htfDirection,
+    intermediateDirection,
+    executionDirection,
+  ].filter(
+    (value): value is 'LONG' | 'SHORT' =>
+      value !== null
+  );
+
+  let trend: 'LONG' | 'SHORT' | null = null;
+
+  if (directions.length > 0) {
+    const longCount =
+      directions.filter(
+        x => x === 'LONG'
+      ).length;
+
+    const shortCount =
+      directions.filter(
+        x => x === 'SHORT'
+      ).length;
+
+    if (longCount > shortCount) {
+      trend = 'LONG';
+    }
+
+    if (shortCount > longCount) {
+      trend = 'SHORT';
+    }
+  }
+
+  const structureAlignment =
+    htfDirection !== null &&
+    intermediateDirection !== null &&
+    executionDirection !== null &&
+    htfDirection === intermediateDirection &&
+    intermediateDirection === executionDirection;
+
+  let macroBias:
+    | 'BULLISH'
+    | 'BEARISH'
+    | 'NEUTRAL'
+    | 'MIXED' = 'NEUTRAL';
+
+  if (trend === 'LONG') {
+    macroBias = 'BULLISH';
+  } else if (trend === 'SHORT') {
+    macroBias = 'BEARISH';
+  }
+
+  return {
+    trend,
+
+    state: executionStructure.state,
+
+    higherTimeframe:
+      htfStructure.state,
+
+    intermediateTimeframe:
+      intermediateStructure.state,
+
+    executionTimeframe:
+      executionStructure.state,
+
+    structureAlignment,
+
+    liquidity:
+      buildLiquidityMap(candles),
+
+    volatility:
+      calculateVolatility(candles),
+
+    // Fundamental engine will replace these
+    // defaults in the next batch.
+    newsRisk: 'LOW',
+
+    macroBias,
+
+    reasons: [],
+
+    warnings: [],
+  };
+}
