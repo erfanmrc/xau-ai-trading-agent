@@ -11,11 +11,8 @@ import {
   Candle,
 } from '@/lib/strategy/types';
 
-
 export async function GET() {
-
   return NextResponse.json({
-
     ok: true,
 
     endpoint:
@@ -25,7 +22,6 @@ export async function GET() {
       'POST',
 
     body: {
-
       candles:
         'Candle[]',
 
@@ -37,7 +33,6 @@ export async function GET() {
     },
 
     riskModel: {
-
       balanceIndependent:
         true,
 
@@ -53,59 +48,76 @@ export async function GET() {
   });
 }
 
-
 export async function POST(
   req: NextRequest
 ) {
-
   try {
-
     const body =
       await req.json();
 
-
-    /*
-     * ============================
-     * CANDLE NORMALIZATION
-     * ============================
-     */
+    const rawCandles =
+      Array.isArray(
+        body.candles
+      )
+        ? body.candles
+        : [];
 
     const candles =
-      (body.candles || [])
+      rawCandles
 
         .map(
-          (x: any) => ({
+          (value: unknown) => {
+            const item =
+              value as Record<
+                string,
+                unknown
+              >;
 
-            time:
-              Number(x.time),
+            return {
+              time:
+                Number(
+                  item.time
+                ),
 
-            open:
-              Number(x.open),
+              open:
+                Number(
+                  item.open
+                ),
 
-            high:
-              Number(x.high),
+              high:
+                Number(
+                  item.high
+                ),
 
-            low:
-              Number(x.low),
+              low:
+                Number(
+                  item.low
+                ),
 
-            close:
-              Number(x.close),
+              close:
+                Number(
+                  item.close
+                ),
 
-            volume:
-              x.volume == null
-                ? undefined
-                : Number(x.volume),
-          })
+              volume:
+                item.volume ==
+                null
+                  ? undefined
+                  : Number(
+                      item.volume
+                    ),
+            } satisfies Candle;
+          }
         )
 
         .filter(
-          (x: Candle) =>
+          (candle: Candle) =>
             [
-              x.time,
-              x.open,
-              x.high,
-              x.low,
-              x.close,
+              candle.time,
+              candle.open,
+              candle.high,
+              candle.low,
+              candle.close,
             ].every(
               Number.isFinite
             )
@@ -116,76 +128,46 @@ export async function POST(
             a: Candle,
             b: Candle
           ) =>
-            a.time - b.time
+            a.time -
+            b.time
         );
 
-
-    /*
-     * Minimum candles
-     */
-
     if (
-      candles.length < 30
+      candles.length <
+      30
     ) {
-
       return NextResponse.json(
-
         {
           ok: false,
 
           error:
             'At least 30 candles are required',
         },
-
         {
           status: 400,
         }
       );
     }
 
-
-    /*
-     * Timeframe
-     */
-
     const timeframe:
-      'M1' | 'M5' =
-
-        body.timeframe === 'M5'
+      | 'M1'
+      | 'M5' =
+        body.timeframe ===
+        'M5'
           ? 'M5'
           : 'M1';
 
-
-    /*
-     * Spread
-     */
+    const spreadValue =
+      Number(
+        body.spread
+      );
 
     const spread =
       Number.isFinite(
-        Number(body.spread)
+        spreadValue
       )
-        ? Number(body.spread)
+        ? spreadValue
         : 0;
-
-
-    /*
-     * ============================
-     * STRATEGY ENGINE
-     * ============================
-     *
-     * IMPORTANT:
-     *
-     * There is NO balance here.
-     *
-     * The strategy only knows:
-     *
-     * - price
-     * - structure
-     * - setup
-     * - spread
-     * - risk percentage
-     *
-     */
 
     const result =
       analyze(
@@ -194,25 +176,19 @@ export async function POST(
         spread
       );
 
-
     return NextResponse.json({
-
       ok: true,
 
       result,
     });
-
   } catch {
-
     return NextResponse.json(
-
       {
         ok: false,
 
         error:
           'Invalid request body',
       },
-
       {
         status: 400,
       }
