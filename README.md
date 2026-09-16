@@ -1,31 +1,35 @@
-# XAU AI Trading Agent — Batch 4
+# XAU AI Trading Agent — Batch 5: permissive execution + diagnostic backtest
 
-This batch completes the unified strategy layer and adds the first deterministic backtest engine.
+## Trading decision model
 
-## What changed
+- A single `VALID` strategy with a complete entry/stop plan is sufficient to create an execution candidate.
+- Agreement between multiple strategies is **not required**.
+- H1 is the primary directional filter: a candidate is blocked only when H1 explicitly points opposite to the strategy direction. H1=NEUTRAL does not block.
+- M15 is treated as structure confirmation and contributes to scoring, not as a hard prerequisite.
+- M5 is setup context and M1 is trigger context; they contribute to scoring, not hard alignment.
+- The highest-scoring non-blocked valid strategy is selected.
 
-- Micro-MAP is now a real deterministic detector instead of a placeholder.
-- SP2L, PRO_BTB and Micro-MAP use the same `StrategySignal` contract.
-- M1 candles are resampled into M5/M15/H1 for MTF context.
-- Previous-day, session and rolling-range levels are mapped from candle timestamps.
-- Unified decision logic exposes all three strategy states and a consensus mode.
-- `/api/strategy/analyze` supports live GET and candle-array POST.
-- `/api/backtest` supports candle-array POST and a bounded live-data GET smoke backtest.
-- Backtest includes spread, next-open execution, max 3 trades/day, daily risk cap, 0.5% base risk, x2 entry, TP/SL, equity drawdown and daily drawdown metrics.
+## Diagnostic backtest
 
-## Important Micro-MAP note
+The backtest now records every strategy evaluation as an opportunity and reports:
+
+- VALID / WATCH / INVALID counts
+- EXECUTE / REJECT counts
+- rejection reasons
+- per-strategy opportunity statistics for SP2L, PRO_BTB and MICROMAP
+- multi-day data coverage
+- normal trading performance metrics and prop-rule checks
+
+This makes it possible to measure whether a strategy is naturally producing setups before adding tighter execution filters in a later batch.
+
+## Data note
+
+`GET /api/backtest` requests up to 5000 M1 candles by default (about several trading days depending on the feed). Use `?candles=1500` through `?candles=5000` to adjust within the bounded live-data smoke range. For longer research, prefer POSTing a larger historical candle set.
+
+## Micro-MAP note
 
 The source material describes Micro-MAP as a micro-channel based approach using prior highs/lows, breakout/trigger logic, inside-bar / pullback structures and multiple entry attempts. The code is a deterministic implementation of the documented concepts, not a claim that a transcript alone reproduces every proprietary execution nuance.
 
 ## Backtest caveat
 
 The engine is candle-based. When the same candle touches both stop and target, the implementation resolves that candle conservatively as stop-first because tick ordering is unavailable.
-
-## Environment
-
-`TWELVE_DATA_API_KEY`
-`TELEGRAM_BOT_TOKEN`
-`TELEGRAM_CHAT_ID`
-`CRON_SECRET`
-
-Build: `npm run build`
