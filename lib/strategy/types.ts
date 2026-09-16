@@ -22,6 +22,7 @@ export interface Candle {
 
 export interface Structure {
   state: MarketState;
+
   breakout:
     | 'BULLISH'
     | 'BEARISH'
@@ -41,13 +42,15 @@ export interface Spike {
 
   strongCandles: number;
 
+  expansion: number;
+
   imbalance: boolean;
 
   score: number;
 }
 
 export interface Leg2 {
-  direction?: Direction;
+  direction: Direction;
 
   confirmed: boolean;
 
@@ -60,8 +63,6 @@ export interface Leg2 {
   entry?: number | null;
 
   stop?: number | null;
-
-  stopLoss?: number | null;
 
   retrace?: number;
 }
