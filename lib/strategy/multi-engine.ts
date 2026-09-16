@@ -1,99 +1,181 @@
-export interface StrategyConfig {
-  structureLookback: number;
-  swingStrength: number;
+import {
+  Candle,
+  MarketContext,
+  MultiStrategyResult,
+  StrategySignal,
+} from './types';
 
-  spike: {
-    minStrongCandles: number;
-    bodyToRangeMin: number;
-    directionalCloseMin: number;
-    expansionVsMedian: number;
-    maxBars: number;
-  };
+import {
+  StrategyDetector,
+} from './strategy-contract';
 
-  imbalance: {
-    minGapATR: number;
-  };
-
-  pullback: {
-    minRetrace: number;
-    maxRetrace: number;
-    maxBarsAfterSpike: number;
-  };
-
-  confirmation: {
-    minBodyToRange: number;
-    closeInDirection: number;
-  };
-
-  scoring: {
-    minimumSignal: number;
-    strongSignal: number;
-  };
-
-  risk: {
-    defaultRiskPercent: number;
-    maxRiskPercent: number;
-    maxCombinedRiskPercent: number;
-    targetRR: number;
-    minRR: number;
-    maxRR: number;
-    x2Enabled: boolean;
-    x2VolumeMultiplier: number;
+function invalidSignal(
+  strategy: StrategySignal['strategy']
+): StrategySignal {
+  return {
+    strategy,
+    status: 'INVALID',
+    direction: null,
+    score: 0,
+    entry: null,
+    stopLoss: null,
+    takeProfit: null,
+    risk: null,
+    reasons: [],
+    warnings: [],
   };
 }
 
-export const DEFAULT_CONFIG: StrategyConfig = {
-  structureLookback: 80,
+export function analyzeAllStrategies(
+  candles: Candle[],
+  context: MarketContext,
+  detectors: StrategyDetector[]
+): MultiStrategyResult {
 
-  swingStrength: 2,
+  const results =
+    detectors.map(
+      detector =>
+        detector.analyze(
+          candles,
+          context
+        )
+    );
 
-  spike: {
-    minStrongCandles: 3,
-    bodyToRangeMin: 0.55,
-    directionalCloseMin: 0.65,
-    expansionVsMedian: 1.15,
-    maxBars: 6,
-  },
+  const sp2l =
+    results.find(
+      x => x.strategy === 'SP2L'
+    ) ??
+    invalidSignal('SP2L');
 
-  imbalance: {
-    minGapATR: 0.08,
-  },
+  const btb =
+    results.find(
+      x => x.strategy === 'PRO_BTB'
+    ) ??
+    invalidSignal('PRO_BTB');
 
-  pullback: {
-    minRetrace: 0.25,
-    maxRetrace: 0.70,
-    maxBarsAfterSpike: 10,
-  },
+  const microMap =
+    results.find(
+      x => x.strategy === 'MICRO_MAP'
+    ) ??
+    invalidSignal('MICRO_MAP');
 
-  confirmation: {
-    minBodyToRange: 0.45,
-    closeInDirection: 0.60,
-  },
+  const activeSignals =
+    results.filter(
+      x =>
+        x.status === 'VALID' &&
+        x.direction !== null
+    );
 
-  scoring: {
-    minimumSignal: 70,
-    strongSignal: 82,
-  },
+  const longSignals =
+    activeSignals.filter(
+      x => x.direction === 'LONG'
+    );
 
-  risk: {
-    defaultRiskPercent: 0.5,
-    maxRiskPercent: 1.0,
-    maxCombinedRiskPercent: 1.0,
-    targetRR: 2.0,
-    minRR: 1.5,
-    maxRR: 3.5,
-    x2Enabled: true,
-    x2VolumeMultiplier: 2,
-  },
-};
+  const shortSignals =
+    activeSignals.filter(
+      x => x.direction === 'SHORT'
+    );
 
-/*
- * Backward compatibility
- *
- * structure.ts, spike.ts and leg2.ts هنوز از CONFIG
- * استفاده می‌کنند. بنابراین فعلاً CONFIG را به عنوان
- * alias برای DEFAULT_CONFIG نگه می‌داریم.
- *
- * هیچ وابستگی به balance یا account size وجود ندارد.
- */
-export const CONFIG = DEFAULT_CONFIG;
+  let primaryDirection:
+    | 'LONG'
+    | 'SHORT'
+    | null = null;
+
+  if (
+    longSignals.length >
+    shortSignals.length
+  ) {
+    primaryDirection = 'LONG';
+  } else if (
+    shortSignals.length >
+    longSignals.length
+  ) {
+    primaryDirection = 'SHORT';
+  }
+
+  /*
+   * Technical context can suppress
+   * contradictory signals.
+   */
+
+  const alignedSignals =
+    activeSignals.filter(
+      signal =>
+        context.trend === null ||
+        signal.direction === context.trend
+    );
+
+  let overallScore = 0;
+
+  if (alignedSignals.length > 0) {
+    overallScore =
+      Math.max(
+        ...alignedSignals.map(
+          signal => signal.score
+        )
+      );
+  }
+
+  /*
+   * A strategy must itself be valid.
+   * Multiple strategies agreeing does NOT
+   * automatically create a trade.
+   */
+
+  let signal:
+    | 'LONG'
+    | 'SHORT'
+    | 'WAIT' = 'WAIT';
+
+  if (
+    primaryDirection !== null &&
+    alignedSignals.some(
+      x =>
+        x.direction ===
+          primaryDirection &&
+        x.status === 'VALID'
+    )
+  ) {
+    signal = primaryDirection;
+  }
+
+  const reasons = [
+    ...context.reasons,
+
+    ...results.flatMap(
+      x => x.reasons
+    ),
+  ];
+
+  const warnings = [
+    ...context.warnings,
+
+    ...results.flatMap(
+      x => x.warnings
+    ),
+  ];
+
+  return {
+    symbol: 'XAUUSD',
+
+    marketContext: context,
+
+    strategies: {
+      SP2L: sp2l,
+      PRO_BTB: btb,
+      MICRO_MAP: microMap,
+    },
+
+    activeSignals,
+
+    primaryDirection,
+
+    overallScore,
+
+    signal,
+
+    reasons,
+
+    warnings,
+  };
+}
