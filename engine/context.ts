@@ -1,42 +1,52 @@
-import { Candle, MarketContext, MarketBias } from '@/types/market';
+import { Candle, EconomicEvent, MarketBias, MarketContext } from '@/types/market';
 import { resample } from '@/engine/indicators';
-import { summarizeStructure } from '@/engine/market-structure';
+import { classifyMarketPhase, detectMotherMove, summarizeStructure } from '@/engine/market-structure';
 import { buildImportantLevels } from '@/engine/levels';
+import { buildEconomicContext } from '@/engine/economic';
 
-function latestBias(c: Candle[]): MarketBias { return summarizeStructure(c).bias; }
-function sessionName(iso: string) {
-  const h = new Date(iso).getUTCHours();
-  if (h >= 7 && h < 12) return 'LONDON';
-  if (h >= 12 && h < 17) return 'NEW_YORK';
-  if (h >= 0 && h < 7) return 'ASIA';
+function sessionName(iso:string){
+  const h=new Date(iso).getUTCHours();
+  if(h>=7&&h<12) return 'LONDON';
+  if(h>=12&&h<17) return 'NEW_YORK';
+  if(h>=0&&h<7) return 'ASIA';
   return 'OFF_SESSION';
 }
-function dayKey(t:string) { return new Date(t).toISOString().slice(0,10); }
-function levels(c:Candle[]) {
-  if (!c.length) return {previousDayHigh:null,previousDayLow:null,sessionHigh:null,sessionLow:null,rangeHigh:null,rangeLow:null};
-  const currentDay=dayKey(c.at(-1)!.time);
-  const previous=c.filter(x=>dayKey(x.time)!==currentDay);
-  const prevDayKey=previous.length ? dayKey(previous.at(-1)!.time) : null;
-  const prev=previous.filter(x=>dayKey(x.time)===prevDayKey);
-  const session=sessionName(c.at(-1)!.time);
-  const sameSession=c.filter(x=>sessionName(x.time)===session && dayKey(x.time)===currentDay);
-  const recent=c.slice(-20);
-  return {
-    previousDayHigh: prev.length ? Math.max(...prev.map(x=>x.high)) : null,
-    previousDayLow: prev.length ? Math.min(...prev.map(x=>x.low)) : null,
-    sessionHigh: sameSession.length ? Math.max(...sameSession.map(x=>x.high)) : null,
-    sessionLow: sameSession.length ? Math.min(...sameSession.map(x=>x.low)) : null,
-    rangeHigh: recent.length ? Math.max(...recent.map(x=>x.high)) : null,
-    rangeLow: recent.length ? Math.min(...recent.map(x=>x.low)) : null,
-  };
-}
-export function buildContext(m1:Candle[]): MarketContext {
-  const m5=resample(m1,5), m15=resample(m1,15), h1=resample(m1,60);
-  const h1b=latestBias(h1), m15b=latestBias(m15), m5b=latestBias(m5), m1b=latestBias(m1);
+function dayKey(t:string){ return new Date(t).toISOString().slice(0,10); }
+function latestBias(c:Candle[],lookback=80):MarketBias{return c.length?summarizeStructure(c,Math.min(lookback,c.length)).bias:'NEUTRAL';}
+
+export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:EconomicEvent[]):MarketContext{
+  const sorted=m1.slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
+  if(!sorted.length) throw new Error('No M1 candles supplied');
+  const m5=resample(sorted,5),m15=resample(sorted,15),h1=resample(sorted,60);
+  const currentDay=dayKey(sorted.at(-1)!.time);
+  const rawDaily=dailyCandles?.length?dailyCandles.slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime()):resample(sorted,1440);
+  const daily=rawDaily.filter(x=>dayKey(x.time)<currentDay);
+  const weekly=resample(daily,10080);
+  const h1b=latestBias(h1),m15b=latestBias(m15),m5b=latestBias(m5),m1b=latestBias(sorted);
+  const dailyb=daily.length>=5?latestBias(daily,30):'NEUTRAL';
+  const weeklyb=weekly.length>=3?latestBias(weekly,12):'NEUTRAL';
   const vals=[h1b,m15b,m5b,m1b];
-  const long=vals.filter(x=>x==='LONG').length, short=vals.filter(x=>x==='SHORT').length;
+  const long=vals.filter(x=>x==='LONG').length,short=vals.filter(x=>x==='SHORT').length;
   const bias:MarketBias=long>short?'LONG':short>long?'SHORT':'NEUTRAL';
-  const aligned=bias!=='NEUTRAL' && vals.every(x=>x===bias);
-  const alignmentScore=(vals.filter(x=>x!=='NEUTRAL' && x===bias).length/vals.length)*100;
-  return {bias,h1:h1b,m15:m15b,m5:m5b,m1:m1b,alignmentScore,aligned,session:sessionName(m1.at(-1)!.time),liquidity:levels(m1),importantLevels:buildImportantLevels(m1)};
+  const aligned=bias!=='NEUTRAL'&&vals.every(x=>x===bias);
+  const alignmentScore=(vals.filter(x=>x!=='NEUTRAL'&&x===bias).length/vals.length)*100;
+  const motherCandidates=[
+    detectMotherMove(m15,'M15'),detectMotherMove(m5,'M5'),detectMotherMove(sorted,'M1')
+  ].filter(Boolean).map(x=>x!);
+  const currentTime=new Date(sorted.at(-1)!.time).getTime();
+  const motherMove=motherCandidates
+    .filter(x=>currentTime-new Date(x.endTime).getTime()<=90*60_000)
+    .sort((a,b)=>b.strength-a.strength || new Date(b.endTime).getTime()-new Date(a.endTime).getTime())[0]??null;
+  return {
+    bias,h1:h1b,m15:m15b,m5:m5b,m1:m1b,dailyBias:dailyb,weeklyBias:weeklyb,
+    phase:classifyMarketPhase(sorted),motherMove,alignmentScore,aligned,
+    session:sessionName(sorted.at(-1)!.time),
+    liquidity:{
+      previousDayHigh:buildImportantLevels(sorted).previousDayHigh, previousDayLow:buildImportantLevels(sorted).previousDayLow,
+      sessionHigh:buildImportantLevels(sorted).sessionHigh, sessionLow:buildImportantLevels(sorted).sessionLow,
+      rangeHigh:buildImportantLevels(sorted).rangeHigh, rangeLow:buildImportantLevels(sorted).rangeLow
+    },
+    importantLevels:buildImportantLevels(sorted),
+    economic:buildEconomicContext(sorted.at(-1)!.time,economicEvents)
+  };
 }

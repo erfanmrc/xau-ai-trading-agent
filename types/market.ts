@@ -2,6 +2,7 @@ export type Direction = 'LONG' | 'SHORT';
 export type SignalStatus = 'VALID' | 'WATCH' | 'INVALID';
 export type StrategyName = 'SP2L' | 'PRO_BTB' | 'MICROMAP';
 export type MarketBias = 'LONG' | 'SHORT' | 'NEUTRAL';
+export type MarketPhase = 'SPIKE' | 'CHANNEL' | 'RANGE' | 'TRANSITION' | 'UNCLEAR';
 
 export type Candle = {
   time: string;
@@ -10,6 +11,41 @@ export type Candle = {
   low: number;
   close: number;
   volume: number;
+};
+
+export type MotherMove = {
+  timeframe: 'M1'|'M5'|'M15';
+  direction: Direction;
+  startIndex: number;
+  endIndex: number;
+  startTime: string;
+  endTime: string;
+  breakoutLevel: number;
+  extreme: number;
+  legSize: number;
+  candleCount: number;
+  pressureGap: number;
+  expansionRatio: number;
+  efficiency: number;
+  strength: number;
+};
+
+export type EconomicEvent = {
+  time: string;
+  currency?: string;
+  title: string;
+  impact: 'LOW'|'MEDIUM'|'HIGH';
+  actual?: number|null;
+  forecast?: number|null;
+  previous?: number|null;
+};
+
+export type EconomicContext = {
+  status: 'AVAILABLE'|'UNAVAILABLE';
+  risk: 'NONE'|'ELEVATED'|'HIGH_IMPACT_NEAR';
+  bias: MarketBias;
+  upcoming: EconomicEvent[];
+  notes: string[];
 };
 
 export type StructureSummary = {
@@ -22,6 +58,20 @@ export type StructureSummary = {
 };
 
 export type EntryConfluence = { score:number; labels:string[]; nearest:number|null; distance:number|null; atrReference:number; };
+
+export type RiskPlan = {
+  tradable: boolean;
+  riskPercent: number;
+  riskMoney: number;
+  stopDistance: number;
+  lotSize: number | null;
+  rr: number;
+  takeProfit?: number | null;
+  x2Entry?: number | null;
+  x2LotSize?: number | null;
+  combinedRiskPercent?: number | null;
+  warnings: string[];
+};
 
 export type StrategySignal = {
   strategy: StrategyName;
@@ -42,18 +92,29 @@ export type StrategySignal = {
   confluence?: EntryConfluence | null;
 };
 
-export type RiskPlan = {
-  tradable: boolean;
-  riskPercent: number;
-  riskMoney: number;
-  stopDistance: number;
-  lotSize: number | null;
-  rr: number;
-  takeProfit?: number | null;
-  x2Entry?: number | null;
-  x2LotSize?: number | null;
-  combinedRiskPercent?: number | null;
-  warnings: string[];
+export type ImportantLevels = {
+  round5:number;
+  round10:number;
+  previousDayHigh:number|null;
+  previousDayLow:number|null;
+  previousDayMid:number|null;
+  sessionHigh:number|null;
+  sessionLow:number|null;
+  sessionMid:number|null;
+  rangeHigh:number|null;
+  rangeLow:number|null;
+  rangeMid:number|null;
+  sma50M5:number|null;
+  sma60M5:number|null;
+  sma50M15:number|null;
+  sma60M15:number|null;
+  sma50H1:number|null;
+  sma60H1:number|null;
+  ema20M5:number|null;
+  ema50M5:number|null;
+  ema20M15:number|null;
+  m15SwingHigh:number|null;
+  m15SwingLow:number|null;
 };
 
 export type MarketContext = {
@@ -62,10 +123,14 @@ export type MarketContext = {
   m15: MarketBias;
   m5: MarketBias;
   m1: MarketBias;
+  dailyBias: MarketBias;
+  weeklyBias: MarketBias;
+  phase: MarketPhase;
+  motherMove: MotherMove | null;
   alignmentScore: number;
   aligned: boolean;
   session?: string;
-  importantLevels: {round5:number;round10:number;previousDayMid:number|null;sessionMid:number|null;rangeMid:number|null;ema20M5:number|null;ema50M5:number|null;ema20M15:number|null};
+  importantLevels: ImportantLevels;
   liquidity: {
     previousDayHigh: number | null;
     previousDayLow: number | null;
@@ -74,4 +139,5 @@ export type MarketContext = {
     rangeHigh: number | null;
     rangeLow: number | null;
   };
+  economic: EconomicContext;
 };

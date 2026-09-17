@@ -2,14 +2,15 @@ import { Candle, StrategySignal } from '@/types/market';
 import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { atr, bodyRatio, candleDirection, closeLocation, median } from '@/engine/indicators';
 import { buildRisk } from '@/engine/risk';
-import { summarizeStructure } from '@/engine/market-structure';
+import { summarizeStructure, classifyMarketPhase } from '@/engine/market-structure';
 import { assessEntryConfluence } from '@/engine/levels';
 
 function invalid(reason:string,warnings:string[]=[]):StrategySignal{return {strategy:'MICROMAP',status:'INVALID',score:0,reason,reasons:[reason],warnings,direction:null};}
 
 export function detectMicroMap(c:Candle[], balance=C.balance, spread=0):StrategySignal {
   if(c.length<C.analysis.minCandles) return invalid('Insufficient candles for Micro-MAP');
-  const end=c.length-1, s=summarizeStructure(c), a=Math.max(atr(c,14),0.05), current=c[end];
+  const end=c.length-1, s=summarizeStructure(c), phase=classifyMarketPhase(c), a=Math.max(atr(c,14),0.05), current=c[end];
+  if(phase==='RANGE') return {strategy:'MICROMAP',status:'INVALID',score:0,reason:'Market is in RANGE; Micro-MAP waits for a clean channel',reasons:['Range conditions detected','Micro-MAP is reserved for directional channel structure'],warnings:[],direction:null};
   for(const d of ['LONG','SHORT'] as const){
     for(let channelBars=C.analysis.microMap.maxChannelBars;channelBars>=C.analysis.microMap.minChannelBars;channelBars--){
       const channelEnd=end-2, start=channelEnd-channelBars+1;
@@ -51,7 +52,7 @@ export function detectMicroMap(c:Candle[], balance=C.balance, spread=0):Strategy
       // Micro-MAP deliberately does not use X2: a tight stop + high RR profile
       // already gives asymmetric payoff and avoids compounding its higher stop-out rate.
       const risk=buildRisk(d,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,C.analysis.microMap.targetRR,C.analysis.microMap.x2Enabled);
-      const score=Math.min(100,70+(s.bias===d?12:0)+(s.breakout===d?8:0)+Math.min(confluence.score,10));
+      const score=Math.min(100,70+(s.bias===d?12:0)+(s.breakout===d?8:0)+(phase==='CHANNEL'?8:0)+Math.min(confluence.score,10));
       const reasons=[`${channelBars}-bar tight micro-channel`,`${channelBars-1}-bar directional compression`,'One-bar controlled pullback','Trigger breakout with strong confirmation',`Tight stop ${(stopDistance/a).toFixed(2)} ATR`,'4R target profile',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
       if(!risk.tradable) return {strategy:'MICROMAP',status:'INVALID',score,reason:'Micro-MAP setup rejected by risk engine',reasons,warnings:risk.warnings,direction:d,entry,trigger,stop,risk,confluence};
       return {strategy:'MICROMAP',status:'VALID',score,reason:'Strict Micro-MAP confirmed',reasons,warnings:[],direction:d,entry,entry2:null,trigger,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence};

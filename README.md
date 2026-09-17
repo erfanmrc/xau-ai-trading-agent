@@ -1,68 +1,58 @@
-# XAU AI Trading Agent — Batch 9: SP2L/BTB/Micro-MAP practical execution
+# XAU AI Trading Agent — Batch 12
 
-## Core execution model
-- One `VALID` strategy with a complete entry/stop plan is sufficient.
-- There is no requirement for two strategies to agree.
-- H1 is the only hard directional filter: `LONG` blocks a `SHORT` candidate and vice versa; `NEUTRAL` does not block.
-- M15 is structural context, M5 is setup context and M1 is trigger context. These affect scoring rather than acting as hard prerequisites.
-- Round-number and important average/mean levels strengthen a setup when entry is close to them.
+This batch rebuilds the strategy engine around a market-cycle model:
 
-## SP2L practical rules
-- Requires a completed spike breakout with at least 3 strong candles in the trend direction.
-- The pullback is deliberately simple: a return from the extreme of the last spike candle is enough. There is no mandatory minimum retracement percentage.
-- A directional stabilization candle at the start of Leg-2 confirms the entry.
-- Stop is anchored below/above the Leg-1 spike structure.
-- If the price has moved too far from the breakout/origin or the stop becomes too wide, SP2L does not chase the move; it reports a hand-off/wait state for BTB.
-- X2 is placed at the midpoint between entry and stop when the combined risk cap permits it.
-- FVG/imbalance and structure alignment are bonuses, not mandatory SP2L gates.
+SPIKE → CHANNEL → RANGE → TRANSITION
 
-## PRO_BTB practical rules
-- Uses breakout/retest zones from M5 and M15, with the existing M1 zones retained as a secondary source.
-- The model looks for a strong directional departure from a breakout level, followed by a return to that level.
-- Entry requires a visible rejection/strength candle in the expected direction.
-- H1 remains the only hard direction filter.
-- Round/mean price-level confluence increases score but does not create a trade by itself.
+## Strategy architecture
 
-## Micro-MAP practical rules
-- Intentionally the strictest and least frequent strategy.
-- Requires a compact micro-channel, controlled pullback, clean trigger and strong confirmation.
-- Stop must remain tight relative to ATR.
-- Uses a higher target profile (`4R`) with a minimum RR guard (`3R`).
-- A valid Micro-MAP remains rare by design; the system should not loosen it merely to increase trade count.
+- H1: main directional filter.
+- M15: market structure + support/resistance + 50/60-period averages.
+- M5: setup/context.
+- M1: trigger.
+- Daily/weekly bias: broader directional context; only a simultaneous daily+weekly opposition blocks a candidate (plus the hard H1 filter).
 
-## Batch 9 optimizations
-- X2 is now a deferred add-on: the second position is activated only after price first moves away from Entry 1 and then returns to the midpoint between Entry 1 and the shared stop.
-- The backtest never credits X2 PnL or floating exposure before the X2 trigger is actually touched.
-- BTB confirmation requires a touch/retest plus a decisive rejection close beyond the breakout zone; oversized BTB stops are rejected instead of being rescued by a tiny lot.
-- Confluence is capped in the strategy score so round/mean levels strengthen a real setup without overpowering weak price action.
-- A short cooldown prevents repeated entries from the same strategy immediately after an attempt, with a longer cooldown after a stop-loss.
-- SP2L uses a 3R target profile; Micro-MAP keeps 4R and does not use X2 because it is already the highest-variance, tight-stop setup.
+## SP2L
 
-## Risk and X2
-- Base risk defaults to 0.5% per trade.
-- Daily planned-risk budget defaults to 3% and max trades to 3.
-- X2 uses the defined volume multiplier from the first position at the midpoint, so the halved distance is handled by the doubled volume rather than by multiplying risk again.
-- The combined-risk cap is enforced.
-- Backtest re-calculates position size, X2 and target from the actual execution price when `NEXT_OPEN` is used.
+- Mother spike = 3–4 strong full-body candles.
+- Candles after the first must preserve a pressure/non-overlap gap from the first candle close.
+- Expansion, displacement and directional efficiency are checked.
+- Spike origin should have contextual support from higher-timeframe structure or a relevant price/average level.
+- Pullback is intentionally simple: one counter-direction return candle can stabilize the first leg; no fixed pullback percentage is imposed.
+- Entry is the first clean Leg-2 break after the return.
+- Projected target is based on an equal second leg. A setup is not traded when that projection cannot justify the stop.
+- If the first leg becomes too extended or the stop becomes too wide, wait for BTB rather than chase.
 
-## Diagnostic backtest
-The backtest records every strategy evaluation and reports:
-- VALID / WATCH / INVALID
-- EXECUTE / REJECT
-- detailed rejection reasons
-- confluence labels and score
-- per-strategy opportunities, executions, wins, losses, PnL, total/average R, win rate and profit factor
-- total and daily drawdown including open-position mark-to-market equity
-- daily planned-risk usage
-- multi-day data coverage
+## PRO_BTB
 
-## Data note
-`GET /api/backtest?candles=5000` remains the bounded live-data smoke/backtest mode. For 30–60 day research, POST a larger historical `candles[]` dataset to `/api/backtest`.
+- BTB zones are derived from M5/M15 mother-spike departures, using breakout/Order-Block-style origin zones.
+- Return must touch the active zone after a real departure.
+- Entry uses a two-step rejection confirmation rather than an instant touch-only trigger.
+- Wide stops and entries too far from the level are rejected.
 
-## Candle backtest caveat
-When the same candle touches both stop and target, the engine resolves the candle conservatively as stop-first because tick ordering is unavailable.
+## Micro-MAP
 
-Batch 9 optimization: SP2L requires Leg-2 candle to break the return-candle extreme; BTB M1 uses a two-step retest/rejection sequence and avoids chase entries beyond a zone-distance ATR cap; M5/M1 disagreement is a stronger score penalty, not a hard filter; X2 remains deferred and is not counted until triggered.
+- Reserved for directional channel structure, not mother spikes.
+- Tight geometry, small stop and 4R target profile.
+- No X2.
 
+## X2
 
-Batch 10 integrity patch: Twelve Data intraday XAU data is requested in UTC; X2 activation uses prior completed candle close for favorable-move confirmation to avoid intrabar ordering ambiguity.
+- X2 is deferred. Initial order is active first.
+- A completed favorable candle must establish at least the configured favorable-R threshold before the next candle may trigger the midpoint add-on.
+- X2 PnL, exposure and actual risk are counted only after activation.
+
+## Context / economic data
+
+POST endpoints can accept `dailyCandles[]` and `economicEvents[]`. Without a structured event feed, the economic layer remains neutral and explicitly reports that data is unavailable.
+
+## Data time
+
+Twelve Data requests for XAU/USD use `timezone=UTC` so session, daily and weekly context are calculated against a consistent timestamp basis.
+
+## Backtest
+
+GET:
+`/api/backtest?candles=5000`
+
+The backtest reports strategy-specific opportunity statistics, rejections, daily/weekly context, market phase and X2 diagnostics.

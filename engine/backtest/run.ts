@@ -30,7 +30,8 @@ export function runBacktest(input:BacktestInput):BacktestResult {
 
   type OpenPosition={
     strategy:StrategyName;direction:Direction;signalTime:string;entryTime:string;entryBar:number;entry:number;entry2:number|null;lot:number;lot2:number;stop:number;tp:number;
-    plannedRiskPercent:number;initialRiskPercent:number;x2RiskPercent:number;x2Activated:boolean;x2ActivationTime:string|null;favorableMove:number;
+    plannedRiskPercent:number;initialRiskPercent:number;x2RiskPercent:number;x2Activated:boolean;x2ActivationTime:string|null;favorableMove:number;mfeR:number;setupScore:number;x2TriggeredAtR:number|null;
+    marketPhase:string;dailyBias:string;weeklyBias:string;
   };
   let open:OpenPosition|null=null;
 
@@ -117,12 +118,15 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       open.favorableMove=Math.max(open.favorableMove,closeFavorable);
       const firstStopDistance=pipsRisk(open.entry,open.stop,open.direction);
       const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*C.analysis.execution.minFavorableRForX2);
+      const intrabarMfe=long?Math.max(0,c.high-open.entry):Math.max(0,open.entry-c.low);
+      open.mfeR=Math.max(open.mfeR,intrabarMfe/Math.max(firstStopDistance,1e-9));
       const x2CanActivate=i>open.entryBar && open.favorableMove>=favorableThreshold;
       if(!open.x2Activated && open.entry2!==null && open.lot2>0 && x2CanActivate){
         const x2Hit=long?c.low<=open.entry2:c.high>=open.entry2;
         if(x2Hit){
           open.x2Activated=true;
           open.x2ActivationTime=c.time;
+          open.x2TriggeredAtR=Number((open.favorableMove/Math.max(firstStopDistance,1e-9)).toFixed(3));
           dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+open.x2RiskPercent);
         }
       }
@@ -144,7 +148,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
           id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:c.time,
           entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
           x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
-          plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome
+          plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome,diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias}
         });
         if(outcome==='SL') lastLossIndex.set(open.strategy,i);
         open=null;
@@ -161,7 +165,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const todayTrades=dailyTrades.get(currentDay)||0;
     if(todayTrades>=cfg.maxTradesPerDay || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
-    const signal=analyzeUnified(candles.slice(0,i+1),balance,cfg.spread);
+    const signal=analyzeUnified(candles.slice(0,i+1),balance,cfg.spread,input.dailyCandles,input.economicEvents);
     const chosen=signal.selection;
     for(const s of signal.signals){
       const candidate=signal.candidates.find(x=>x.strategy===s.strategy);
@@ -175,6 +179,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       addOpportunity({
         index:i,time:c.time,strategy:s.strategy,direction:s.direction??null,status:s.status,action,score:candidate?.score??s.score,reason:s.reason,rejectionReason,
         entry:s.entry??null,stop:s.stop??null,h1:signal.context.h1,m15:signal.context.m15,m5:signal.context.m5,m1:signal.context.m1,
+        dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias,phase:signal.context.phase,phaseRelation:candidate?.phaseRelation??'NEUTRAL',
         confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[]
       });
     }
@@ -212,7 +217,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     open={
       strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entryBar:(i+1<candles.length&&cfg.execution==='NEXT_OPEN'?i+1:i),entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
       plannedRiskPercent:Number(combinedRisk.toFixed(4)),initialRiskPercent:Number(initialRisk.toFixed(4)),x2RiskPercent:Number(x2RiskPct.toFixed(4)),
-      x2Activated:false,x2ActivationTime:null,favorableMove:0
+      x2Activated:false,x2ActivationTime:null,favorableMove:0,mfeR:0,setupScore:chosen.score,x2TriggeredAtR:null,marketPhase:signal.context.phase,dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias
     };
     dailyRiskUsed.set(currentDay,nowUsed+combinedRisk);
     dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+initialRisk);
@@ -236,7 +241,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:last.time,
       entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
       x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
-      plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome:'EOD'
+      plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome:'EOD',diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias}
     });
     open=null;
     updateDrawdown(last.close);

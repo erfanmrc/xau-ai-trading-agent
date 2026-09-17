@@ -29,6 +29,10 @@ export type BacktestOpportunity={
   m15:'LONG'|'SHORT'|'NEUTRAL';
   m5:'LONG'|'SHORT'|'NEUTRAL';
   m1:'LONG'|'SHORT'|'NEUTRAL';
+  dailyBias:'LONG'|'SHORT'|'NEUTRAL';
+  weeklyBias:'LONG'|'SHORT'|'NEUTRAL';
+  phase:'SPIKE'|'CHANNEL'|'RANGE'|'TRANSITION'|'UNCLEAR';
+  phaseRelation:'PRIMARY'|'SUPPORTIVE'|'NEUTRAL'|'OPPOSE';
   confluenceScore:number;
   confluenceLabels:string[];
 };
@@ -73,6 +77,7 @@ export type BacktestTrade={
   pnl:number;
   rMultiple:number;
   outcome:'TP'|'SL'|'EOD';
+  diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; };
 };
 
 export type BacktestResult={
@@ -109,4 +114,4 @@ export type BacktestResult={
   dataCoverage:{start:string|null;end:string|null;calendarDays:number;tradingDaysWithData:number;candles:number};
 };
 
-export type BacktestInput={candles:Candle[];config?:Partial<BacktestConfig>;propRules?:Partial<BacktestResult['propRules']>};
+export type BacktestInput={candles:Candle[];dailyCandles?:Candle[];economicEvents?:import('@/types/market').EconomicEvent[];config?:Partial<BacktestConfig>;propRules?:Partial<BacktestResult['propRules']>};
