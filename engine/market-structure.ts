@@ -158,21 +158,21 @@ export function classifyMarketPhase(c:Candle[]):MarketPhase{
 }
 
 function assessDailyPriceActionSnapshot(c:Candle[]): import('@/types/market').DailyPriceAction {
-  const empty = (state:'UNCLEAR'|'RANGE'='UNCLEAR'): import('@/types/market').DailyPriceAction => {
-    const result: import('@/types/market').DailyPriceAction = {
-      state,
-      bias:'NEUTRAL',
-      confirmed:false,
-      entryReady:false,
-      correction:false,
-      score:0,
-      pressure:0,
-      recentImpulse:0,
-      candleQuality:0,
-      reason:state==='RANGE'?'Daily price action is balanced/ranging':'Insufficient completed daily price-action history'
-    };
-    return result;
-  };
+  // BATCH38: every DailyPriceAction is constructed through this typed factory.
+  const makeEmptyDailyPA = (state:'UNCLEAR'|'RANGE'='UNCLEAR'): import('@/types/market').DailyPriceAction => ({
+    state,
+    bias:'NEUTRAL',
+    confirmed:false,
+    entryReady:false,
+    correction:false,
+    score:0,
+    pressure:0,
+    recentImpulse:0,
+    candleQuality:0,
+    reason:state==='RANGE'?'Daily price action is balanced/ranging':'Insufficient completed daily price-action history'
+  });
+
+  const empty = makeEmptyDailyPA;
 
   const src=(c??[]).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
   const clean=src.filter(x=>Number.isFinite(x.open)&&Number.isFinite(x.high)&&Number.isFinite(x.low)&&Number.isFinite(x.close)&&x.high>x.low);
