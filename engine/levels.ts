@@ -28,7 +28,8 @@ export function buildImportantLevels(c:Candle[]):ImportantLevels{
     round5:0,round10:0,previousDayHigh:null,previousDayLow:null,previousDayMid:null,
     sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,
     sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,
-    ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null
+    ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null,
+    m5SwingHigh:null,m5SwingLow:null,h1SwingHigh:null,h1SwingLow:null,m1SwingHigh:null,m1SwingLow:null
   };
   const currentDay=dayKey(c.at(-1)!.time);
   const previous=c.filter(x=>dayKey(x.time)!==currentDay);
@@ -39,6 +40,9 @@ export function buildImportantLevels(c:Candle[]):ImportantLevels{
   const recent=c.slice(-60);
   const m5=resample(c,5),m15=resample(c,15),h1=resample(c,60);
   const m15s=summarizeStructure(m15);
+  const m5s=summarizeStructure(m5);
+  const h1s=summarizeStructure(h1);
+  const m1s=summarizeStructure(c);
   const rHi=recent.length?Math.max(...recent.map(x=>x.high)):null;
   const rLo=recent.length?Math.min(...recent.map(x=>x.low)):null;
   const sHi=sameSession.length?Math.max(...sameSession.map(x=>x.high)):null;
@@ -53,7 +57,10 @@ export function buildImportantLevels(c:Candle[]):ImportantLevels{
     rangeHigh:rHi,rangeLow:rLo,rangeMid:rHi!==null&&rLo!==null?(rHi+rLo)/2:null,
     sma50M5:sma(m5,50),sma60M5:sma(m5,60),sma50M15:sma(m15,50),sma60M15:sma(m15,60),
     sma50H1:sma(h1,50),sma60H1:sma(h1,60),ema20M5:ema(m5,20),ema50M5:ema(m5,50),ema20M15:ema(m15,20),
-    m15SwingHigh:m15s.lastSwingHigh,m15SwingLow:m15s.lastSwingLow
+    m15SwingHigh:m15s.lastSwingHigh,m15SwingLow:m15s.lastSwingLow,
+    m5SwingHigh:m5s.lastSwingHigh,m5SwingLow:m5s.lastSwingLow,
+    h1SwingHigh:h1s.lastSwingHigh,h1SwingLow:h1s.lastSwingLow,
+    m1SwingHigh:m1s.lastSwingHigh,m1SwingLow:m1s.lastSwingLow
   };
 }
 
@@ -66,7 +73,10 @@ export function assessEntryConfluence(c:Candle[],entry:number):EntryConfluence{
     ['SESSION_HIGH',l.sessionHigh],['SESSION_LOW',l.sessionLow],['SESSION_MID',l.sessionMid],['RANGE_HIGH',l.rangeHigh],['RANGE_LOW',l.rangeLow],['RANGE_MID',l.rangeMid],
     ['SMA50_M5',l.sma50M5],['SMA60_M5',l.sma60M5],['SMA50_M15',l.sma50M15],['SMA60_M15',l.sma60M15],
     ['SMA50_H1',l.sma50H1],['SMA60_H1',l.sma60H1],['EMA20_M5',l.ema20M5],['EMA50_M5',l.ema50M5],['EMA20_M15',l.ema20M15],
-    ['M15_SWING_HIGH',l.m15SwingHigh],['M15_SWING_LOW',l.m15SwingLow]
+    ['M15_SWING_HIGH',l.m15SwingHigh],['M15_SWING_LOW',l.m15SwingLow],
+    ['M5_SWING_HIGH',l.m5SwingHigh],['M5_SWING_LOW',l.m5SwingLow],
+    ['H1_SWING_HIGH',l.h1SwingHigh],['H1_SWING_LOW',l.h1SwingLow],
+    ['M1_SWING_HIGH',l.m1SwingHigh],['M1_SWING_LOW',l.m1SwingLow]
   ];
   const hits=refs.filter(([,v])=>v!==null).map(([name,v])=>({name,v:v!,d:Math.abs(entry-v!)}));
   const nearest=hits.sort((a,b)=>a.d-b.d)[0];

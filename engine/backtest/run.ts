@@ -4,12 +4,15 @@ import { BacktestConfig, BacktestInput, BacktestResult, BacktestTrade, BacktestO
 import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { buildRisk } from '@/engine/risk';
 import { fastGate } from '@/engine/backtest/fast-gate';
+import { atr, bodyRatio, candleDirection, closeLocation, resample } from '@/engine/indicators';
+import { summarizeStructure } from '@/engine/market-structure';
 
 const DEFAULTS:BacktestConfig={
   balance:C.balance,
   riskPercent:C.riskPercent,
   dailyRiskLimitPercent:C.dailyMaxRiskPercent,
-  maxTradesPerDay:3,
+  maxTradesPerDay:0,
+  maxTakeProfitsPerDay:0,
   spread:0.05,
   startIndex:60,
   execution:'NEXT_OPEN',
@@ -22,7 +25,16 @@ const DEFAULTS:BacktestConfig={
 const day=(t:string)=>new Date(t).toISOString().slice(0,10);
 const pipsRisk=(entry:number,stop:number,dir:Direction)=>dir==='LONG'?entry-stop:stop-entry;
 const emptyStats=(strategy:StrategyName):BacktestStrategyStats=>({strategy,opportunities:0,valid:0,watch:0,invalid:0,executed:0,rejected:0,wins:0,losses:0,pnl:0,totalR:0,avgR:0,winRate:0,profitFactor:null});
-const initialRiskPercent=(lot:number,entry:number,stop:number,balance:number)=>Math.abs(entry-stop)*lot*C.contractSize/Math.max(balance,1e-9)*100;
+const riskDollars=(entry:number,stop:number,lot:number,spread:number)=> (Math.abs(entry-stop)+Math.max(spread,0))*lot*C.contractSize;
+const initialRiskPercent=(lot:number,entry:number,stop:number,balance:number,spread:number)=>riskDollars(entry,stop,lot,spread)/Math.max(balance,1e-9)*100;
+
+function targetPlan(source:ReturnType<typeof analyzeUnified>['signals'][number],entry:number,stop:number,spread:number){
+  const leg1=source.targetLegSize??0;
+  const targetDistance=Math.max(leg1-Math.max(spread,0),0);
+  const effectiveStop=(source.direction==='LONG'?entry-stop:stop-entry)+Math.max(spread,0);
+  const rr=targetDistance/Math.max(effectiveStop,1e-9);
+  return {leg1,targetDistance,rr,tp:source.direction==='LONG'?entry+targetDistance:entry-targetDistance};
+}
 
 export function runBacktest(input:BacktestInput):BacktestResult {
   const candles=input.candles.slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
@@ -33,7 +45,8 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   type OpenPosition={
     strategy:StrategyName;direction:Direction;signalTime:string;entryTime:string;entryBar:number;entry:number;entry2:number|null;lot:number;lot2:number;stop:number;tp:number;
     plannedRiskPercent:number;initialRiskPercent:number;x2RiskPercent:number;x2Activated:boolean;x2ActivationTime:string|null;favorableMove:number;mfeR:number;setupScore:number;x2TriggeredAtR:number|null;
-    marketPhase:string;dailyBias:string;weeklyBias:string;
+    targetLegSize:number;targetDistance:number;plannedRR:number;targetReached:boolean;
+    marketPhase:string;dailyBias:string;weeklyBias:string;dailyTrendState:string;
   };
   let open:OpenPosition|null=null;
 
@@ -112,49 +125,75 @@ export function runBacktest(input:BacktestInput):BacktestResult {
 
     if(open){
       const long=open.direction==='LONG';
-      // Conservative candle-by-candle X2 model: require a completed candle
-      // CLOSE to establish the favorable move before allowing a later candle
-      // to trigger the midpoint add-on. This avoids assuming intrabar order
-      // when one OHLC candle touches both the favorable threshold and X2.
       const prior=candles[i-1];
       const closeFavorable=prior ? (long?Math.max(0,prior.close-open.entry):Math.max(0,open.entry-prior.close)) : 0;
       open.favorableMove=Math.max(open.favorableMove,closeFavorable);
       const firstStopDistance=pipsRisk(open.entry,open.stop,open.direction);
+      const firstRiskDistance=firstStopDistance+Math.max(cfg.spread,0);
       const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*C.analysis.execution.minFavorableRForX2);
       const intrabarMfe=long?Math.max(0,c.high-open.entry):Math.max(0,open.entry-c.low);
-      open.mfeR=Math.max(open.mfeR,intrabarMfe/Math.max(firstStopDistance,1e-9));
+      open.mfeR=Math.max(open.mfeR,intrabarMfe/Math.max(firstRiskDistance,1e-9));
       const x2CanActivate=i>open.entryBar && open.favorableMove>=favorableThreshold;
       if(!open.x2Activated && open.entry2!==null && open.lot2>0 && x2CanActivate){
         const x2Hit=long?c.low<=open.entry2:c.high>=open.entry2;
-        if(x2Hit){
+        const currentUsed=dailyRiskUsed.get(currentDay)||0;
+        const x2WithinDailyBudget=currentUsed+open.x2RiskPercent<=cfg.dailyRiskLimitPercent+1e-9;
+        if(x2Hit && x2WithinDailyBudget){
           open.x2Activated=true;
           open.x2ActivationTime=c.time;
           open.x2TriggeredAtR=Number((open.favorableMove/Math.max(firstStopDistance,1e-9)).toFixed(3));
+          dailyRiskUsed.set(currentDay,currentUsed+open.x2RiskPercent);
           dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+open.x2RiskPercent);
         }
       }
 
       const hitStop=long?c.low<=open.stop:c.high>=open.stop;
-      const hitTp=long?c.high>=open.tp:c.low<=open.tp;
-      if(hitStop||hitTp){
-        const exit=hitStop&&hitTp?open.stop:(hitStop?open.stop:open.tp);
-        const outcome:BacktestTrade['outcome']=hitStop?'SL':'TP';
+      if(hitStop){
+        const exit=open.stop;
+        const outcome:'SL'='SL';
         let pnl=(long?exit-open.entry:open.entry-exit)*open.lot*C.contractSize;
         if(open.x2Activated && open.lot2&&open.entry2!==null) pnl+=(long?exit-open.entry2:open.entry2-exit)*open.lot2*C.contractSize;
         balance+=pnl;
         dailyPnl.set(currentDay,(dailyPnl.get(currentDay)||0)+pnl);
-        const firstRiskDollars=Math.abs(open.entry-open.stop)*open.lot*C.contractSize;
-        const secondRiskDollars=open.x2Activated&&open.entry2!==null?Math.abs(open.entry2-open.stop)*open.lot2*C.contractSize:0;
+        const firstRiskDollars=riskDollars(open.entry,open.stop,open.lot,cfg.spread);
+        const secondRiskDollars=open.x2Activated&&open.entry2!==null?riskDollars(open.entry2,open.stop,open.lot2,cfg.spread):0;
         const actualRisk=Math.max(firstRiskDollars+secondRiskDollars,1e-9);
         const actualRiskPct=actualRisk/Math.max(balance-pnl,1e-9)*100;
         recordTrade({
           id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:c.time,
           entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
           x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
-          plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome,diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias}
+          plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome,
+          diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias,exitReason:'STOP',targetReached:open.targetReached,plannedRR:open.plannedRR,leg1Size:open.targetLegSize,dailyTrendState:open.dailyTrendState}
         });
-        if(outcome==='SL') lastLossIndex.set(open.strategy,i);
+        lastLossIndex.set(open.strategy,i);
         open=null;
+      }else{
+        const hitTarget=long?c.high>=open.tp:c.low<=open.tp;
+        if(hitTarget){
+          // Profit is closed strictly at the precomputed TP level. Market-trend
+          // analysis governs NEW entries only; it never turns a TP into an early
+          // discretionary exit.
+          const exit=open.tp;
+          open.targetReached=true;
+          const outcome:'TP'='TP';
+          let pnl=(long?exit-open.entry:open.entry-exit)*open.lot*C.contractSize;
+          if(open.x2Activated && open.lot2&&open.entry2!==null) pnl+=(long?exit-open.entry2:open.entry2-exit)*open.lot2*C.contractSize;
+          balance+=pnl;
+          dailyPnl.set(currentDay,(dailyPnl.get(currentDay)||0)+pnl);
+          const firstRiskDollars=riskDollars(open.entry,open.stop,open.lot,cfg.spread);
+          const secondRiskDollars=open.x2Activated&&open.entry2!==null?riskDollars(open.entry2,open.stop,open.lot2,cfg.spread):0;
+          const actualRisk=Math.max(firstRiskDollars+secondRiskDollars,1e-9);
+          const actualRiskPct=actualRisk/Math.max(balance-pnl,1e-9)*100;
+          recordTrade({
+            id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:c.time,
+            entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
+            x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
+            plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome,
+            diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias,exitReason:'TARGET',targetReached:true,plannedRR:open.plannedRR,leg1Size:open.targetLegSize,dailyTrendState:open.dailyTrendState}
+          });
+          open=null;
+        }
       }
     }
 
@@ -166,7 +205,9 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     if(open) continue;
 
     const todayTrades=dailyTrades.get(currentDay)||0;
-    if(todayTrades>=cfg.maxTradesPerDay || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
+    // maxTradesPerDay=0 means unlimited. There is deliberately no daily
+    // take-profit-count limit; the remaining daily safety control is risk.
+    if((cfg.maxTradesPerDay>0 && todayTrades>=cfg.maxTradesPerDay) || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
     const gate=fastGate(candles.slice(Math.max(0,i-9),i+1));
     let signal;
@@ -205,7 +246,10 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         index:i,time:c.time,strategy:s.strategy,direction:s.direction??null,status:s.status,action,score:candidate?.score??s.score,reason:s.reason,rejectionReason,
         entry:s.entry??null,stop:s.stop??null,h1:signal.context.h1,m15:signal.context.m15,m5:signal.context.m5,m1:signal.context.m1,
         dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias,phase:signal.context.phase,phaseRelation:candidate?.phaseRelation??'NEUTRAL',
-        confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[]
+        confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[],
+        dailyTrendHighLabel:signal.context.structure.daily.highLabel,
+        dailyTrendLowLabel:signal.context.structure.daily.lowLabel,
+        dailyTrendState:signal.context.structure.daily.state
       });
     }
 
@@ -227,24 +271,44 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const entryRisk=pipsRisk(entry,stop,source.direction);
     if(entryRisk<=0){markOpportunity(i,chosen.strategy,'REJECT','Entry/stop geometry is invalid after execution-price adjustment');continue;}
 
-    const liveRisk=buildRisk(source.direction,entry,stop,balance,cfg.riskPercent,cfg.spread,source.risk.rr,cfg.allowX2 && chosen.strategy!=='MICROMAP');
-    if(!liveRisk.tradable||!liveRisk.lotSize){markOpportunity(i,chosen.strategy,'REJECT','Risk engine rejected the position size');continue;}
-    const initialRisk=initialRiskPercent(liveRisk.lotSize,entry,stop,balance);
-    const combinedRisk=liveRisk.combinedRiskPercent??initialRisk;
-    const nowUsed=dailyRiskUsed.get(currentDay)||0;
-    if(nowUsed+combinedRisk>cfg.dailyRiskLimitPercent+1e-9){markOpportunity(i,chosen.strategy,'REJECT','Daily potential-risk budget would be exceeded');continue;}
+    const plan=targetPlan(source,entry,stop,cfg.spread);
+    const stage=source.targetMode==='X2_LEG1_MINUS_SPREAD'?'X2':source.targetMode==='SINGLE_LEG1_MINUS_SPREAD'?'SINGLE':'OTHER';
+    const targetAllowed=stage==='SINGLE'
+      ? plan.rr>=C.singleStageMinRR-1e-9 && plan.rr<=C.singleStageMaxRR+1e-9
+      : stage==='X2'
+        ? plan.rr>=C.twoStageMinRR-1e-9 && plan.rr<=C.twoStageMaxRR+1e-9
+        : chosen.strategy==='PRO_BTB'
+          ? plan.rr>=C.btbMinRR-1e-9
+          : chosen.strategy==='MICROMAP'
+            ? plan.rr>=C.analysis.microMap.minRR-1e-9
+            : false;
+    if(!targetAllowed){markOpportunity(i,chosen.strategy,'REJECT',`Leg-1 target RR ${plan.rr.toFixed(2)}R falls outside ${stage==='SINGLE'?'1-2R':stage==='X2'?'2-5R':stage==='OTHER'&&chosen.strategy==='MICROMAP'?'>4R':'BTB >=2R'} after execution-price adjustment`);continue;}
 
-    const tp=liveRisk.takeProfit??(source.direction==='LONG'?entry+entryRisk*source.risk.rr:entry-entryRisk*source.risk.rr);
-    const entry2=cfg.allowX2 && chosen.strategy!=='MICROMAP'?liveRisk.x2Entry??null:null;
-    const lot2=cfg.allowX2 && chosen.strategy!=='MICROMAP'?liveRisk.x2LotSize??0:0;
-    const x2RiskPct=entry2!==null&&lot2>0?Math.max(0,combinedRisk-initialRisk):0;
+    const x2EnabledForTrade=cfg.allowX2 && chosen.strategy!=='MICROMAP' && stage!=='SINGLE';
+    const liveRisk=buildRisk(source.direction,entry,stop,balance,C.riskPercent,cfg.spread,plan.rr,x2EnabledForTrade);
+    if(!liveRisk.tradable||!liveRisk.lotSize){markOpportunity(i,chosen.strategy,'REJECT','Risk engine rejected the position size');continue;}
+    if(stage==='X2' && (!liveRisk.x2Entry||!liveRisk.x2LotSize)){markOpportunity(i,chosen.strategy,'REJECT','Two-stage setup requires the combined 1% X2 risk plan');continue;}
+    const initialRisk=initialRiskPercent(liveRisk.lotSize,entry,stop,balance,cfg.spread);
+    const combinedRisk=liveRisk.combinedRiskPercent??initialRisk;
+    const x2RiskPct=x2EnabledForTrade&&liveRisk.x2Entry!==null&&liveRisk.x2LotSize!==null?Math.max(0,combinedRisk-initialRisk):0;
+    const nowUsed=dailyRiskUsed.get(currentDay)||0;
+    // At entry only the first 0.5% is committed. The extra ~0.5% is committed
+    // only when X2 actually activates at the midpoint.
+    if(nowUsed+initialRisk>cfg.dailyRiskLimitPercent+1e-9){markOpportunity(i,chosen.strategy,'REJECT','Daily initial-risk budget would be exceeded');continue;}
+
+    const tp=plan.tp;
+    const entry2=x2EnabledForTrade?liveRisk.x2Entry??null:null;
+    const lot2=x2EnabledForTrade?liveRisk.x2LotSize??0:0;
     const entryTime=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].time:c.time;
     open={
       strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entryBar:(i+1<candles.length&&cfg.execution==='NEXT_OPEN'?i+1:i),entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
-      plannedRiskPercent:Number(combinedRisk.toFixed(4)),initialRiskPercent:Number(initialRisk.toFixed(4)),x2RiskPercent:Number(x2RiskPct.toFixed(4)),
-      x2Activated:false,x2ActivationTime:null,favorableMove:0,mfeR:0,setupScore:chosen.score,x2TriggeredAtR:null,marketPhase:signal.context.phase,dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias
+      plannedRiskPercent:Number((initialRisk+x2RiskPct).toFixed(4)),initialRiskPercent:Number(initialRisk.toFixed(4)),x2RiskPercent:Number(x2RiskPct.toFixed(4)),
+      x2Activated:false,x2ActivationTime:null,favorableMove:0,mfeR:0,setupScore:chosen.score,x2TriggeredAtR:null,
+      targetLegSize:plan.leg1,targetDistance:plan.targetDistance,plannedRR:plan.rr,targetReached:false,
+      marketPhase:signal.context.phase,dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias,
+      dailyTrendState:signal.context.structure.daily.state
     };
-    dailyRiskUsed.set(currentDay,nowUsed+combinedRisk);
+    dailyRiskUsed.set(currentDay,nowUsed+initialRisk);
     dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+initialRisk);
     dailyTrades.set(currentDay,(dailyTrades.get(currentDay)||0)+1);
     lastTradeIndex.set(chosen.strategy,i);
@@ -258,15 +322,15 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     balance+=pnl;
     const lastDay=day(last.time);
     dailyPnl.set(lastDay,(dailyPnl.get(lastDay)||0)+pnl);
-    const firstRiskDollars=Math.abs(open.entry-open.stop)*open.lot*C.contractSize;
-    const secondRiskDollars=open.x2Activated&&open.entry2!==null?Math.abs(open.entry2-open.stop)*open.lot2*C.contractSize:0;
+    const firstRiskDollars=riskDollars(open.entry,open.stop,open.lot,cfg.spread);
+    const secondRiskDollars=open.x2Activated&&open.entry2!==null?riskDollars(open.entry2,open.stop,open.lot2,cfg.spread):0;
     const actualRisk=Math.max(firstRiskDollars+secondRiskDollars,1e-9);
     const actualRiskPct=actualRisk/Math.max(balance-pnl,1e-9)*100;
     recordTrade({
       id:trades.length+1,strategy:open.strategy,direction:open.direction,signalTime:open.signalTime,entryTime:open.entryTime,exitTime:last.time,
       entry:open.entry,exit,stop:open.stop,tp:open.tp,lot:open.lot,lot2:open.x2Activated?open.lot2:0,entry2:open.entry2??null,
       x2Triggered:open.x2Activated,x2ActivationTime:open.x2ActivationTime,initialRiskPercent:open.initialRiskPercent,x2RiskPercent:open.x2Activated?open.x2RiskPercent:0,
-      plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome:'EOD',diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias}
+      plannedRiskPercent:open.plannedRiskPercent,actualRiskPercent:Number(actualRiskPct.toFixed(4)),pnl,rMultiple:pnl/actualRisk,outcome:'EOD',diagnostics:{x2TriggeredAtR:open.x2TriggeredAtR,mfeR:Number(open.mfeR.toFixed(3)),setupScore:open.setupScore,marketPhase:open.marketPhase,dailyBias:open.dailyBias,weeklyBias:open.weeklyBias,exitReason:'EOD',targetReached:open.targetReached,plannedRR:open.plannedRR,leg1Size:open.targetLegSize,dailyTrendState:open.dailyTrendState}
     });
     open=null;
     updateDrawdown(last.close);

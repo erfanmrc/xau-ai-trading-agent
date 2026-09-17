@@ -44,18 +44,30 @@ export function detectMicroMap(c:Candle[], balance=C.balance, spread=0):Strategy
       }
 
       const entry=current.close;
-      const stop=d==='LONG'?Math.min(...pull.map(x=>x.low),channelExtreme):Math.max(...pull.map(x=>x.high),channelExtreme);
+      const structure=summarizeStructure(c.slice(0,-1),120);
+      const structuralStop=d==='LONG'?Math.min(...pull.map(x=>x.low),channelExtreme,structure.lastSwingLow??Infinity):Math.max(...pull.map(x=>x.high),channelExtreme,structure.lastSwingHigh??-Infinity);
+      const stop=structuralStop;
       const stopDistance=d==='LONG'?entry-stop:stop-entry;
       if(stopDistance<=0 || stopDistance>a*C.analysis.microMap.maxStopATR) return invalid('Micro-MAP stop is wider than the strict limit',['Micro-MAP requires tight geometry']);
 
+      // For Micro-MAP, the first directional leg is represented by the
+      // channel's breakout span. TP remains exactly Leg-1 minus spread.
+      const channelHigh=Math.max(...ch.map(x=>x.high));
+      const channelLow=Math.min(...ch.map(x=>x.low));
+      const leg1=Math.max(Math.abs(channelHigh-channelLow),Math.abs(trigger-channelExtreme));
+      const targetDistance=Math.max(leg1-Math.max(spread,0),0);
+      const targetRR=targetDistance/Math.max(stopDistance+spread,1e-9);
+      if(targetDistance<=0 || targetRR<C.analysis.microMap.minRR){
+        return {strategy:'MICROMAP',status:'WATCH',score:60,reason:'Micro-MAP setup exists but Leg-1 target is below the required 4R minimum',reasons:[`Micro Leg-1=${leg1.toFixed(4)}`,`Leg-1 minus spread=${targetDistance.toFixed(4)}`,`Projected RR=${targetRR.toFixed(2)}R`,`Minimum=${C.analysis.microMap.minRR.toFixed(2)}R`],warnings:['Micro-MAP target must remain Leg-1 length minus spread and projected RR must stay above 4R'],direction:d,entry,trigger,stop,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD'};
+      }
+
       const confluence=assessEntryConfluence(c,entry);
-      // Micro-MAP deliberately does not use X2: a tight stop + high RR profile
-      // already gives asymmetric payoff and avoids compounding its higher stop-out rate.
-      const risk=buildRisk(d,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,C.analysis.microMap.targetRR,C.analysis.microMap.x2Enabled);
+      // Micro-MAP remains single-stage: 0.5% risk and no X2.
+      const risk=buildRisk(d,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,targetRR,false);
       const score=Math.min(100,70+(s.bias===d?12:0)+(s.breakout===d?8:0)+(phase==='CHANNEL'?8:0)+Math.min(confluence.score,10));
-      const reasons=[`${channelBars}-bar tight micro-channel`,`${channelBars-1}-bar directional compression`,'One-bar controlled pullback','Trigger breakout with strong confirmation',`Tight stop ${(stopDistance/a).toFixed(2)} ATR`,'4R target profile',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
-      if(!risk.tradable) return {strategy:'MICROMAP',status:'INVALID',score,reason:'Micro-MAP setup rejected by risk engine',reasons,warnings:risk.warnings,direction:d,entry,trigger,stop,risk,confluence};
-      return {strategy:'MICROMAP',status:'VALID',score,reason:'Strict Micro-MAP confirmed',reasons,warnings:[],direction:d,entry,entry2:null,trigger,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence};
+      const reasons=[`${channelBars}-bar tight micro-channel`,`${channelBars-1}-bar directional compression`,'One-bar controlled pullback','Trigger breakout with strong confirmation',`Tight stop ${(stopDistance/a).toFixed(2)} ATR`,`Leg-1 target=${targetDistance.toFixed(4)} (${targetRR.toFixed(2)}R)`,'Target rule: Leg-1 length minus spread','Micro-MAP requires >4R; target remains Leg-1 minus spread',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
+      if(!risk.tradable) return {strategy:'MICROMAP',status:'INVALID',score,reason:'Micro-MAP setup rejected by risk engine',reasons,warnings:risk.warnings,direction:d,entry,trigger,stop,risk,confluence,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD'};
+      return {strategy:'MICROMAP',status:'VALID',score,reason:'Strict Micro-MAP confirmed',reasons,warnings:[],direction:d,entry,entry2:null,trigger,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD'};
     }
   }
   return invalid('No qualifying strict Micro-MAP pattern',['Micro-MAP is intentionally rare and requires tight geometry']);

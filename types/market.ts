@@ -54,6 +54,14 @@ export type StructureSummary = {
   lastClose: number | null;
   lastSwingHigh: number | null;
   lastSwingLow: number | null;
+  previousSwingHigh: number | null;
+  previousSwingLow: number | null;
+  highLabel: 'HH' | 'LH' | null;
+  lowLabel: 'HL' | 'LL' | null;
+  protectedHigh: number | null;
+  protectedLow: number | null;
+  reversalToLong: boolean;
+  reversalToShort: boolean;
   breakout: Direction | null;
 };
 
@@ -90,6 +98,10 @@ export type StrategySignal = {
   zone?: { low: number; high: number; source: string } | null;
   risk?: RiskPlan | null;
   confluence?: EntryConfluence | null;
+  targetLegSize?: number | null;
+  targetDistance?: number | null;
+  targetRR?: number | null;
+  targetMode?: 'SINGLE_LEG1_MINUS_SPREAD'|'X2_LEG1_MINUS_SPREAD'|'BTB_LEG1_MINUS_SPREAD'|'MICRO_LEG1_MINUS_SPREAD'|'TREND_EXIT';
 };
 
 export type ImportantLevels = {
@@ -115,6 +127,12 @@ export type ImportantLevels = {
   ema20M15:number|null;
   m15SwingHigh:number|null;
   m15SwingLow:number|null;
+  m5SwingHigh:number|null;
+  m5SwingLow:number|null;
+  h1SwingHigh:number|null;
+  h1SwingLow:number|null;
+  m1SwingHigh:number|null;
+  m1SwingLow:number|null;
 };
 
 export type MarketContext = {
@@ -131,6 +149,7 @@ export type MarketContext = {
   aligned: boolean;
   session?: string;
   importantLevels: ImportantLevels;
+  structure: {m1:StructureSummary;m5:StructureSummary;m15:StructureSummary;h1:StructureSummary;daily:StructureSummary;weekly:StructureSummary};
   liquidity: {
     previousDayHigh: number | null;
     previousDayLow: number | null;

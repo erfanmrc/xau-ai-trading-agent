@@ -11,7 +11,8 @@ export type StrategyZone={
   strength:number,
   startIndex:number,
   endIndex:number,
-  timeframe:'M1'|'M5'|'M15'
+  timeframe:'M1'|'M5'|'M15',
+  legSize?:number
 };
 
 function fvg(c:Candle[],i:number):StrategyZone|null{
@@ -54,11 +55,11 @@ function buildMotherZone(c:Candle[],minutes:5|15):StrategyZone[] {
   // BTB only needs zones that can still be active. Scanning the entire
   // historical TF series here made every backtest candle increasingly
   // expensive (O(n^2)). Keep a bounded recent tail instead.
-  const age=Math.max(C.analysis.btb.maxZoneAgeBars,C.analysis.btb.returnWindowBars)+12;
+  const age=Math.max(C.analysis.btb.maxZoneAgeBars,C.analysis.btb.returnWindowBars)+18;
   const firstIndex=Math.max(4,tf.length-age-6);
   for(let i=firstIndex;i<tf.length-1;i++){
     const window=tf.slice(Math.max(0,i-30),i+2);
-    const mm=detectMotherMoveOnTimeframe(window,minutes===5?'M5':'M15',18);
+    const mm=detectMotherMoveOnTimeframe(window,minutes===5?'M5':'M15',36);
     if(!mm || mm.endIndex!==window.length-2) continue;
     const localStart=mm.startIndex;
     const localEnd=mm.endIndex;
@@ -72,12 +73,13 @@ function buildMotherZone(c:Candle[],minutes:5|15):StrategyZone[] {
     const low=Math.min(bodyLow,breakout)-pad;
     const high=Math.max(bodyHigh,breakout)+pad;
     const width=high-low;
-    if(width>a*0.55) continue;
+    if(width>a*0.90) continue;
     out.push({
       direction:mm.direction,low,high,source:minutes===5?'BTB_5M':'BTB_15M',
       strength:Math.min(100,mm.strength+(minutes===15?4:0)),
       startIndex:i-(localEnd-localStart+1)-1,endIndex:i,
-      timeframe:minutes===5?'M5':'M15'
+      timeframe:minutes===5?'M5':'M15',
+      legSize:mm.legSize
     });
   }
   return out.slice(-30);
@@ -109,18 +111,23 @@ export function touchesZoneAfterDeparture(raw:Candle[],tf:Candle[],z:StrategyZon
   if(start<0) return false;
 
   let departedBars=0;
-  let departed=false;
+  let maxConsecutiveAway=0;
+  let anyMeaningfulDeparture=false;
   for(let i=start;i<raw.length-1;i++){
     const x=raw[i];
     const away=z.direction==='LONG'?x.low>z.high:x.high<z.low;
     if(away){
       departedBars++;
-      if(departedBars>=Math.max(2,C.analysis.btb.minDepartureBars)) departed=true;
+      maxConsecutiveAway=Math.max(maxConsecutiveAway,departedBars);
+      if(departedBars>=2) anyMeaningfulDeparture=true;
     }else{
       departedBars=0;
     }
   }
-  if(!departed) return false;
+  // A real BTB only needs a clear move away from the level before the return.
+  // Do not require an uninterrupted 3-bar M1 sequence: a brief overlap inside
+  // a higher-TF zone is common while the move is developing.
+  if(!anyMeaningfulDeparture && maxConsecutiveAway<Math.max(2,C.analysis.btb.minDepartureBars)) return false;
 
   return current.high>=z.low&&current.low<=z.high;
 }

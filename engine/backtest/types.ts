@@ -4,7 +4,8 @@ export type BacktestConfig={
   balance:number;
   riskPercent:number;
   dailyRiskLimitPercent:number;
-  maxTradesPerDay:number;
+  maxTradesPerDay:number; // 0 = unlimited
+  maxTakeProfitsPerDay:number; // 0 = unlimited; retained for explicit configuration, never enforced by default
   spread:number;
   startIndex?:number;
   execution:'NEXT_OPEN'|'SIGNAL_CLOSE';
@@ -36,6 +37,9 @@ export type BacktestOpportunity={
   phaseRelation:'PRIMARY'|'SUPPORTIVE'|'NEUTRAL'|'OPPOSE';
   confluenceScore:number;
   confluenceLabels:string[];
+  dailyTrendHighLabel?:'HH'|'LH'|null;
+  dailyTrendLowLabel?:'HL'|'LL'|null;
+  dailyTrendState?:'UPTREND'|'DOWNTREND'|'RANGE'|'UNCLEAR';
 };
 
 export type BacktestStrategyStats={
@@ -77,8 +81,8 @@ export type BacktestTrade={
   actualRiskPercent:number;
   pnl:number;
   rMultiple:number;
-  outcome:'TP'|'SL'|'EOD';
-  diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; };
+  outcome:'TP'|'SL'|'TREND_EXIT'|'EOD';
+  diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; exitReason?:'STOP'|'TARGET'|'EOD'; targetReached?:boolean; plannedRR?:number; leg1Size?:number; dailyTrendState?:string; };
 };
 
 export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number};

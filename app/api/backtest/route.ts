@@ -41,7 +41,7 @@ export async function GET(req:Request){
   const started=Date.now();
   const url=new URL(req.url);
   const requested=Math.max(1500,Math.min(5000,Number(url.searchParams.get('candles')||5000)));
-  const includeDaily=url.searchParams.get('includeDaily')==='1';
+  const includeDaily=url.searchParams.get('includeDaily')!=='0';
 
   // The large M1 request is the only critical upstream dependency. Twelve Data
   // permits up to 5000 points, but its own docs note that larger historical
@@ -74,8 +74,8 @@ export async function GET(req:Request){
   let dailyError:null|ReturnType<typeof errorDetails>=null;
   let dailyFetchMs=0;
 
-  // Daily data is optional for the backtest. Keeping it out of the critical path
-  // avoids a second upstream request delaying or blocking the core M1 backtest.
+  // Daily context is enabled by default because Daily/Weekly direction is part of
+  // the strategy context. A failure remains non-fatal so M1 backtesting can continue.
   if(includeDaily){
     const dailyStarted=Date.now();
     try{

@@ -101,6 +101,12 @@ export function detectSP2L(c:Candle[],balance=C.balance,spread=0):StrategySignal
   if(leg1<=Math.max(a*0.20,0.05)) return invalid('SP2L Leg-1 is too small');
 
   const rel=relationScore(c,dir);
+  const priorStructure=summarizeStructure(c.slice(0,Math.max(start,1)),120);
+  const structuralLevel=dir==='LONG'?priorStructure.lastSwingHigh:priorStructure.lastSwingLow;
+  const structuralBreak=structuralLevel!==null && (dir==='LONG'?extreme>structuralLevel+Math.max(spread,0):extreme<structuralLevel-Math.max(spread,0));
+  if(C.analysis.spike.requireStructuralBreak && !structuralBreak){
+    return {strategy:'SP2L',status:'INVALID',score:0,reason:'SP2L blocked: mother spike did not break a confirmed structural H/L',reasons:[`Structural ${dir==='LONG'?'swing high':'swing low'}=${structuralLevel??'none'}`,`Spike extreme=${extreme}`,'SP2L requires a meaningful H/L break before the pullback entry'],warnings:[],direction:null};
+  }
   const originLevels=nearOriginLevel(c,breakoutLevel,a);
   const originKey=originLevels.length>0;
   const h1Opp=rel.h1!==dir&&rel.h1!=='NEUTRAL';
@@ -136,33 +142,45 @@ export function detectSP2L(c:Candle[],balance=C.balance,spread=0):StrategySignal
   // behind the far pre-spike origin. This keeps the stop aligned with the
   // actual entry structure and prevents a valid Leg-2 from being discarded
   // merely because the mother candle was large.
-  const stop=dir==='LONG'?pull.low-buffer:pull.high+buffer;
-  return buildConfirmed(dir,start,spikeEnd,run,pre,breakoutLevel,extreme,leg1,rel,originLevels,best,a,stop,pull,balance,spread,end,originKey,'Simple pullback confirmation');
+  const pullStructure=summarizeStructure(c.slice(0,spikeEnd+2),60);
+  const structuralStop=dir==='LONG'?(pullStructure.lastSwingLow??pull.low):(pullStructure.lastSwingHigh??pull.high);
+  const stop=dir==='LONG'?Math.min(pull.low,structuralStop)-buffer:Math.max(pull.high,structuralStop)+buffer;
+  return buildConfirmed(dir,start,spikeEnd,run,pre,breakoutLevel,extreme,leg1,rel,originLevels,best,a,stop,pull,balance,spread,end,originKey,'Simple pullback confirmation',structuralLevel);
 }
 
 
 function buildConfirmed(
   dir:Direction,start:number,spikeEnd:number,run:Candle[],pre:Candle,breakoutLevel:number,extreme:number,leg1:number,
   rel:{score:number;h1:string;m15:string;m5:string;daily:string},originLevels:number[],best:{expansion:number;efficiency:number;gap:number},a:number,
-  stop:number,trigger:Candle,balance:number,spread:number,signalIndex:number,originKey:boolean,mode:string
+  stop:number,trigger:Candle,balance:number,spread:number,signalIndex:number,originKey:boolean,mode:string,structuralLevel:number|null
 ):StrategySignal{
   const entry=trigger.close;
   const stopDistance=dir==='LONG'?entry-stop:stop-entry;
   const stopATR=stopDistance/a;
-  const projectedRR=leg1/Math.max(stopDistance+spread,1e-9);
-  if(stopDistance<=0||stopATR>C.analysis.spike.maxStopATR||projectedRR<C.minRR){
-    return {strategy:'SP2L',status:'WATCH',score:50,reason:'SP2L structure is present but stop/Leg-2 geometry is too wide',reasons:[`Stop=${stopATR.toFixed(2)} ATR`,`Equal-Leg-2 projection=${projectedRR.toFixed(2)}R`,`Minimum required=${C.minRR.toFixed(2)}R`],warnings:['Do not chase an extended spike; hand-off to BTB if needed'],direction:dir,entry,trigger:breakoutLevel,stop};
+  // Target is not an arbitrary R multiple: it is exactly the projected
+  // Leg-1 length minus spread. The resulting R decides whether this is a
+  // single-stage (1-2R) or X2/two-stage (2-5R) geometry.
+  const targetDistance=Math.max(leg1-Math.max(spread,0),0);
+  const projectedRR=targetDistance/Math.max(stopDistance+spread,1e-9);
+  if(stopDistance<=0||stopATR>C.analysis.spike.maxStopATR||targetDistance<=0){
+    return {strategy:'SP2L',status:'WATCH',score:50,reason:'SP2L structure is present but stop/Leg-1 geometry is invalid',reasons:[`Stop=${stopATR.toFixed(2)} ATR`,`Leg-1 minus spread=${targetDistance.toFixed(4)}`],warnings:['Do not chase an extended spike; hand-off to BTB if needed'],direction:dir,entry,trigger:breakoutLevel,stop};
   }
+  if(projectedRR<C.singleStageMinRR || projectedRR>C.twoStageMaxRR){
+    return {strategy:'SP2L',status:'WATCH',score:50,reason:'SP2L structure is present but Leg-1 target falls outside the allowed R band',reasons:[`Leg-1 target RR=${projectedRR.toFixed(2)}R`,`Allowed: ${C.singleStageMinRR.toFixed(2)}-${C.twoStageMaxRR.toFixed(2)}R`,`Single-stage: ${C.singleStageMinRR.toFixed(2)}-${C.singleStageMaxRR.toFixed(2)}R`,`X2/two-stage: ${C.twoStageMinRR.toFixed(2)}-${C.twoStageMaxRR.toFixed(2)}R`],warnings:['The take-profit must remain equal to Leg-1 length minus spread'],direction:dir,entry,trigger:breakoutLevel,stop};
+  }
+  const twoStage=projectedRR>C.singleStageMaxRR;
   const confluence=assessEntryConfluence(run.length>=1?[...run,trigger]:[trigger],entry);
   const motherSupport=rel.m5===dir;
-  const targetRR=Math.min(C.maxRR,projectedRR);
-  const risk=buildRisk(dir,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,targetRR,C.x2Enabled);
+  const risk=buildRisk(dir,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,projectedRR,C.x2Enabled);
+  if(twoStage && (!risk.x2Entry || !risk.x2LotSize || (risk.combinedRiskPercent??0)>C.x2CombinedRiskPercent+1e-9)){
+    return {strategy:'SP2L',status:'WATCH',score:55,reason:'SP2L has a 2-5R Leg-1 target and therefore requires the X2 risk plan',reasons:[`Leg-1 target RR=${projectedRR.toFixed(2)}R`,'X2 plan is unavailable at the requested combined 1% risk'],warnings:['Wait for a geometry where the X2 position can be sized safely'],direction:dir,entry,trigger:breakoutLevel,stop,risk,confluence};
+  }
   const score=Math.min(100,60+rel.score*5+(originKey?8:0)+confluence.score+(best.gap>=0.05?4:0)+(motherSupport?4:0)+(projectedRR>=3?4:0));
   const reasons=[
     `${dir} mother spike: ${run.length} strong candles`,`Pressure=${best.gap.toFixed(2)} ATR`,`Expansion=${best.expansion.toFixed(2)}x`,`Efficiency=${best.efficiency.toFixed(2)}`,
-    mode,`Equal-Leg-2 projection=${projectedRR.toFixed(2)}R`,originKey?`Spike origin near key level: ${originLevels.join(', ')}`:'No major origin-level confluence',
+    mode,`Confirmed structural break: ${structuralLevel!==null?structuralLevel.toFixed(4):'N/A'}`,`Leg-1 target=${targetDistance.toFixed(4)} (${projectedRR.toFixed(2)}R)`,`Target rule: Leg-1 length minus spread`,twoStage?'X2/two-stage geometry (2-5R)':'Single-stage geometry (1-2R)',originKey?`Spike origin near key level: ${originLevels.join(', ')}`:'No major origin-level confluence',
     motherSupport?'M5 context supports direction':'M5 context is neutral/opposed',confluence.labels.length?`Entry confluence: ${confluence.labels.join(', ')}`:'No entry-level confluence'
   ];
-  if(!risk.tradable) return {strategy:'SP2L',status:'INVALID',score,reason:'SP2L setup rejected by risk engine',reasons,warnings:risk.warnings,direction:dir,entry,trigger:breakoutLevel,stop,risk,confluence};
-  return {strategy:'SP2L',status:'VALID',score,reason:'SP2L confirmed: mother spike → simple pullback → Leg-2 continuation',reasons,warnings:[],direction:dir,entry,entry2:risk.x2Entry??null,trigger:breakoutLevel,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence};
+  if(!risk.tradable) return {strategy:'SP2L',status:'INVALID',score,reason:'SP2L setup rejected by risk engine',reasons,warnings:risk.warnings,direction:dir,entry,trigger:breakoutLevel,stop,risk,confluence,targetLegSize:leg1,targetDistance,targetRR:projectedRR,targetMode:twoStage?'X2_LEG1_MINUS_SPREAD':'SINGLE_LEG1_MINUS_SPREAD'};
+  return {strategy:'SP2L',status:'VALID',score,reason:'SP2L confirmed: mother spike → simple pullback → Leg-2 continuation',reasons,warnings:[],direction:dir,entry,entry2:risk.x2Entry??null,trigger:breakoutLevel,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence,targetLegSize:leg1,targetDistance,targetRR:projectedRR,targetMode:twoStage?'X2_LEG1_MINUS_SPREAD':'SINGLE_LEG1_MINUS_SPREAD'};
 }

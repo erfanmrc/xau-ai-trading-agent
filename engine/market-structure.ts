@@ -13,29 +13,47 @@ function swingLow(c:Candle[], i:number, strength=2){
 }
 
 export function summarizeStructure(c:Candle[],lookback?:number):StructureSummary{
-  if(!c.length) return {state:'UNCLEAR',bias:'NEUTRAL',lastClose:null,lastSwingHigh:null,lastSwingLow:null,breakout:null};
+  if(!c.length) return {
+    state:'UNCLEAR',bias:'NEUTRAL',lastClose:null,lastSwingHigh:null,lastSwingLow:null,
+    previousSwingHigh:null,previousSwingLow:null,highLabel:null,lowLabel:null,
+    protectedHigh:null,protectedLow:null,reversalToLong:false,reversalToShort:false,breakout:null
+  };
   const src=lookback&&c.length>lookback?c.slice(-lookback):c;
-  const highs:number[]=[],lows:number[]=[];
+  const highs:{price:number;index:number}[]=[], lows:{price:number;index:number}[]=[];
   for(let i=2;i<src.length-2;i++){
-    if(swingHigh(src,i)) highs.push(src[i].high);
-    if(swingLow(src,i)) lows.push(src[i].low);
+    if(swingHigh(src,i)) highs.push({price:src[i].high,index:i});
+    if(swingLow(src,i)) lows.push({price:src[i].low,index:i});
   }
-  const hh=highs.length>=2&&highs.at(-1)!>highs.at(-2)!;
-  const lh=highs.length>=2&&highs.at(-1)!<highs.at(-2)!;
-  const hl=lows.length>=2&&lows.at(-1)!>lows.at(-2)!;
-  const ll=lows.length>=2&&lows.at(-1)!<lows.at(-2)!;
-  const lastSwingHigh=highs.at(-1)??null;
-  const lastSwingLow=lows.at(-1)??null;
+  const lastHigh=highs.at(-1)?.price??null, prevHigh=highs.at(-2)?.price??null;
+  const lastLow=lows.at(-1)?.price??null, prevLow=lows.at(-2)?.price??null;
+  const highLabel=lastHigh!==null&&prevHigh!==null?(lastHigh>prevHigh?'HH':lastHigh<prevHigh?'LH':null):null;
+  const lowLabel=lastLow!==null&&prevLow!==null?(lastLow>prevLow?'HL':lastLow<prevLow?'LL':null):null;
   const close=src.at(-1)!.close;
   let breakout:Direction|null=null;
-  if(lastSwingHigh!==null&&close>lastSwingHigh) breakout='LONG';
-  if(lastSwingLow!==null&&close<lastSwingLow) breakout='SHORT';
+  if(lastHigh!==null&&close>lastHigh) breakout='LONG';
+  if(lastLow!==null&&close<lastLow) breakout='SHORT';
+
+  // A trend is declared only when BOTH sides of structure agree. This keeps
+  // corrections/unclear structure out: HH+HL = uptrend, LH+LL = downtrend.
   let state:StructureSummary['state']='UNCLEAR';
-  if(hh&&hl&&!lh) state='UPTREND';
-  else if(lh&&ll&&!hh) state='DOWNTREND';
-  else if((hh&&hl)||(lh&&ll)) state=breakout==='LONG'?'UPTREND':breakout==='SHORT'?'DOWNTREND':'RANGE';
+  if(highLabel==='HH'&&lowLabel==='HL') state='UPTREND';
+  else if(highLabel==='LH'&&lowLabel==='LL') state='DOWNTREND';
+  else if((highLabel&&lowLabel) || (highs.length>=2&&lows.length>=2)) state='RANGE';
+
+  // During a downtrend, a new HL instead of another LL is a structural
+  // reversal warning. During an uptrend, a new LH instead of another HH is
+  // the symmetric warning. Final reversal still requires candle stabilization
+  // in the execution layer; these flags only describe the H/L structure.
+  const reversalToLong=lowLabel==='HL' && highLabel!=='HH';
+  const reversalToShort=highLabel==='LH' && lowLabel!=='LL';
+  const protectedLow=state==='UPTREND'?lastLow:null;
+  const protectedHigh=state==='DOWNTREND'?lastHigh:null;
   const bias:MarketBias=state==='UPTREND'?'LONG':state==='DOWNTREND'?'SHORT':'NEUTRAL';
-  return {state,bias,lastClose:close,lastSwingHigh,lastSwingLow,breakout};
+  return {
+    state,bias,lastClose:close,lastSwingHigh:lastHigh,lastSwingLow:lastLow,
+    previousSwingHigh:prevHigh,previousSwingLow:prevLow,highLabel,lowLabel,
+    protectedHigh,protectedLow,reversalToLong,reversalToShort,breakout
+  };
 }
 
 function strongCandle(c:Candle,d:Direction,minBody=0.60,minClose=0.72,maxOppWick=0.25):boolean{
