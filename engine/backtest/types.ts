@@ -81,6 +81,8 @@ export type BacktestTrade={
   diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; };
 };
 
+export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number};
+
 export type BacktestResult={
   config:BacktestConfig;
   initialBalance:number;
@@ -112,6 +114,7 @@ export type BacktestResult={
   validOpportunities:BacktestOpportunity[];
   opportunityStats:BacktestStrategyStats[];
   rejectionReasons:{reason:string;count:number}[];
+  performance:BacktestPerformance;
   dataCoverage:{start:string|null;end:string|null;calendarDays:number;tradingDaysWithData:number;candles:number};
 };
 

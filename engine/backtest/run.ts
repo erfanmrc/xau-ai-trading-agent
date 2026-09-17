@@ -3,6 +3,7 @@ import { analyzeUnified } from '@/engine/decision';
 import { BacktestConfig, BacktestInput, BacktestResult, BacktestTrade, BacktestOpportunity, BacktestStrategyStats } from '@/engine/backtest/types';
 import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { buildRisk } from '@/engine/risk';
+import { fastGate } from '@/engine/backtest/fast-gate';
 
 const DEFAULTS:BacktestConfig={
   balance:C.balance,
@@ -47,6 +48,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   const lastTradeIndex=new Map<StrategyName,number>();
   const lastLossIndex=new Map<StrategyName,number>();
   let maxDD=0,maxDailyDD=0,maxDailyRiskUsed=0,maxDailyActualRisk=0;
+  let deepAnalysisCount=0,fastGateSkipCount=0;
 
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
@@ -166,9 +168,29 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const todayTrades=dailyTrades.get(currentDay)||0;
     if(todayTrades>=cfg.maxTradesPerDay || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
-    const windowBars=Math.max(240,Math.min(cfg.analysisWindowBars,candles.length));
-    const analysisStart=Math.max(0,i+1-windowBars);
-    const signal=analyzeUnified(candles.slice(analysisStart,i+1),balance,cfg.spread,input.dailyCandles,input.economicEvents);
+    const gate=fastGate(candles.slice(Math.max(0,i-8),i+1));
+    let signal;
+    if(gate.deepAnalysis){
+      deepAnalysisCount++;
+      const windowBars=Math.max(240,Math.min(cfg.analysisWindowBars,candles.length));
+      const analysisStart=Math.max(0,i+1-windowBars);
+      signal=analyzeUnified(candles.slice(analysisStart,i+1),balance,cfg.spread,input.dailyCandles,input.economicEvents);
+    } else {
+      fastGateSkipCount++;
+      signal={
+        symbol:'XAUUSD',timestamp:c.time,
+        context: { bias:'NEUTRAL',h1:'NEUTRAL',m15:'NEUTRAL',m5:'NEUTRAL',m1:'NEUTRAL',dailyBias:'NEUTRAL',weeklyBias:'NEUTRAL',phase:'TRANSITION',motherMove:null,alignmentScore:0,aligned:false,session:undefined,importantLevels:{round5:Math.round(c.close/5)*5,round10:Math.round(c.close/10)*10,previousDayHigh:null,previousDayLow:null,previousDayMid:null,sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null},liquidity:{previousDayHigh:null,previousDayLow:null,sessionHigh:null,sessionLow:null,rangeHigh:null,rangeLow:null},economic:{status:'UNAVAILABLE',risk:'NONE',bias:'NEUTRAL',upcoming:[],notes:['Fast gate skipped deep analysis']}
+        },
+        signals:[
+          {strategy:'SP2L',status:'INVALID',score:0,reason:'Fast gate: candle cannot trigger a valid SP2L entry',reasons:['No valid entry-trigger geometry on current candle'],warnings:['Deep analysis skipped for performance'],direction:null},
+          {strategy:'PRO_BTB',status:'INVALID',score:0,reason:'Fast gate: candle cannot trigger a valid BTB entry',reasons:['No valid rejection-trigger geometry on current candle'],warnings:['Deep analysis skipped for performance'],direction:null},
+          {strategy:'MICROMAP',status:'INVALID',score:0,reason:'Fast gate: candle cannot trigger a valid Micro-MAP entry',reasons:['No valid trigger candle on current bar'],warnings:['Deep analysis skipped for performance'],direction:null}
+        ],
+        candidates:[],selection:null,
+        consensus:{direction:null,validCount:0,alignedCount:0,eligibleCount:0,mode:'NO_TRADE',reason:'Fast gate skipped deep strategy analysis'},
+        message:'Fast gate skipped deep strategy analysis'
+      } as unknown as ReturnType<typeof analyzeUnified>;
+    }
     const chosen=signal.selection;
     for(const s of signal.signals){
       const candidate=signal.candidates.find(x=>x.strategy===s.strategy);
@@ -300,6 +322,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     validOpportunities:opportunities.filter(x=>x.status==='VALID'),
     opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
+    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2))},
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }
