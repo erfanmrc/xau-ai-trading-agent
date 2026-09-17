@@ -48,3 +48,13 @@ controlled correction; ambiguous/range conditions remain blocked.
 - CORRECTION preserves the underlying trend but also blocks new entries.
 - H/HH/L/HL/LH/LL remain the execution structure used for breakouts, important levels, stops and targets.
 - Historical M1 date-range lookback is extended to 30 calendar days to better reach a 20,000-candle request when the provider has enough data.
+
+## Batch 40: Price Action + Liquidity Context
+
+The trading model remains price-action first. H/HH/L/HL/LH/LL are structural references for breaks, entry, stop and target placement; indicators are context-only.
+
+Liquidity analysis is price-derived: swing/equal-high/equal-low pools, previous-day/session/range extremes, liquidity sweeps, and displacement-based order blocks across M1/M5/M15/H1. These are context and execution-location signals, not independent trade generators.
+
+Volume Profile is optional and only calculated when the feed supplies positive bar volume. When volume is absent/zero, the system reports `UNAVAILABLE` and does not fabricate a profile. Twelve Data documents volume as conditional on instrument/data applicability, while its currency time-series interface is OHLC-focused; therefore a true centralized order-book/DOM liquidity map is not available from the current XAU/USD feed.
+
+Liquidity is a price-action proxy in this release: equal highs/lows, swing pools, prior/session/range extremes, sweeps, and displacement order blocks. It must not be interpreted as a live DOM/order-book feed.

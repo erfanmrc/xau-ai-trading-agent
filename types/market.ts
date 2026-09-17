@@ -69,6 +69,62 @@ export type StructureSummary = {
 
 export type EntryConfluence = { score:number; labels:string[]; nearest:number|null; distance:number|null; atrReference:number; };
 
+export type LiquidityPool = {
+  kind:'SWING_HIGH'|'SWING_LOW'|'EQUAL_HIGH'|'EQUAL_LOW'|'PREVIOUS_DAY_HIGH'|'PREVIOUS_DAY_LOW'|'SESSION_HIGH'|'SESSION_LOW'|'RANGE_HIGH'|'RANGE_LOW'|'ROUND';
+  price:number;
+  strength:number;
+  touches:number;
+  timeframe:'M1'|'M5'|'M15'|'H1'|'DAY';
+  side:'HIGH'|'LOW';
+};
+
+export type OrderBlockZone = {
+  direction:Direction;
+  low:number;
+  high:number;
+  timeframe:'M1'|'M5'|'M15'|'H1';
+  startIndex:number;
+  endIndex:number;
+  strength:number;
+  source:'DISPLACEMENT_OB'|'BREAKOUT_OB';
+  mitigated:boolean;
+};
+
+export type LiquiditySweep = {
+  direction:Direction;
+  side:'HIGH'|'LOW';
+  level:number;
+  time:string;
+  strength:number;
+  reclaimed:boolean;
+};
+
+export type VolumeProfile = {
+  status:'AVAILABLE'|'UNAVAILABLE';
+  source:'BAR_VOLUME'|'NONE';
+  poc:number|null;
+  highVolumeNodes:number[];
+  lowVolumeNodes:number[];
+  totalVolume:number;
+  binSize:number|null;
+  reason:string;
+};
+
+export type LiquidityContext = {
+  pools:LiquidityPool[];
+  orderBlocks:OrderBlockZone[];
+  sweeps:LiquiditySweep[];
+  volumeProfile:VolumeProfile;
+  executionScore:number;
+  executionLabels:string[];
+  nearestLowPool:number|null;
+  nearestHighPool:number|null;
+  nearestOrderBlock:{direction:Direction;low:number;high:number;timeframe:OrderBlockZone['timeframe'];strength:number}|null;
+  activeSweep:LiquiditySweep|null;
+  methodology:'PRICE_ACTION_PROXY';
+  atrReference:number;
+};
+
 export type RiskPlan = {
   tradable: boolean;
   riskPercent: number;
@@ -100,6 +156,11 @@ export type StrategySignal = {
   zone?: { low: number; high: number; source: string } | null;
   risk?: RiskPlan | null;
   confluence?: EntryConfluence | null;
+  liquidityScore?: number;
+  liquidityLabels?: string[];
+  liquiditySweep?: LiquiditySweep | null;
+  orderBlock?: {low:number;high:number;direction:Direction;timeframe:string;strength:number;source:string}|null;
+  volumeProfileStatus?: VolumeProfile['status'];
   targetLegSize?: number | null;
   targetDistance?: number | null;
   targetRR?: number | null;
@@ -166,13 +227,13 @@ export type MarketContext = {
   session?: string;
   importantLevels: ImportantLevels;
   structure: {m1:StructureSummary;m5:StructureSummary;m15:StructureSummary;h1:StructureSummary;daily:StructureSummary;weekly:StructureSummary};
-  liquidity: {
-    previousDayHigh: number | null;
-    previousDayLow: number | null;
-    sessionHigh: number | null;
-    sessionLow: number | null;
-    rangeHigh: number | null;
-    rangeLow: number | null;
+  liquidity: LiquidityContext & {
+    previousDayHigh:number|null;
+    previousDayLow:number|null;
+    sessionHigh:number|null;
+    sessionLow:number|null;
+    rangeHigh:number|null;
+    rangeLow:number|null;
   };
   economic: EconomicContext;
 };

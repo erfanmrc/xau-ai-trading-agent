@@ -40,6 +40,13 @@ export type BacktestOpportunity={
   dailyTrendHighLabel?:'HH'|'LH'|null;
   dailyTrendLowLabel?:'HL'|'LL'|null;
   dailyTrendState?:'UPTREND'|'DOWNTREND'|'CORRECTION'|'RANGE'|'UNCLEAR';
+  liquidityScore?:number;
+  liquidityLabels?:string[];
+  orderBlock?:{low:number;high:number;direction:Direction;timeframe:string;strength:number}|null;
+  liquiditySweep?:{direction:Direction;side:'HIGH'|'LOW';level:number;time:string;strength:number;reclaimed:boolean}|null;
+  volumeProfileStatus?:'AVAILABLE'|'UNAVAILABLE';
+  volumeProfilePoc?:number|null;
+  liquidityMethodology?:'PRICE_ACTION_PROXY';
 };
 
 export type BacktestStrategyStats={
@@ -85,7 +92,7 @@ export type BacktestTrade={
   diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; exitReason?:'STOP'|'TARGET'|'EOD'; targetReached?:boolean; plannedRR?:number; leg1Size?:number; dailyTrendState?:string; };
 };
 
-export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number;dailyPAByDay?:{day:string;state:string;bias:string;confirmed:boolean;correction:boolean;score:number;pressure:number;recentImpulse:number;candleQuality:number;reason:string}[]};
+export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number;dailyPAByDay?:{day:string;state:string;bias:string;confirmed:boolean;entryReady?:boolean;correction:boolean;score:number;pressure:number;recentImpulse:number;candleQuality:number;reason:string}[];liquidityDiagnostics?:{deepAnalyses:number;withSweep:number;withOrderBlock:number;withLiquidityPoolNear:number;volumeProfileAvailable:number}};
 
 export type BacktestResult={
   config:BacktestConfig;

@@ -4,13 +4,17 @@ import { detectSP2L } from '@/agents/sp2l';
 import { detectProBTB } from '@/agents/pro-btb';
 import { detectMicroMap } from '@/agents/micromap';
 import { buildContext } from '@/engine/context';
+import { assessLiquidityConfluence } from '@/engine/liquidity';
 
 export type DecisionCandidate={
   strategy:StrategyName; direction:'LONG'|'SHORT'; score:number; entry:number; stop:number; signalTime:string;
   h1Filter:'PASS'|'BLOCK'|'NEUTRAL'; m15Relation:'CONFIRM'|'OPPOSE'|'NEUTRAL';
   dailyRelation:'CONFIRM'|'OPPOSE'|'NEUTRAL'; weeklyRelation:'CONFIRM'|'OPPOSE'|'NEUTRAL';
   phaseRelation:'PRIMARY'|'SUPPORTIVE'|'NEUTRAL'|'OPPOSE';
-  confluenceScore:number; confluenceLabels:string[]; reasons:string[];
+  confluenceScore:number; confluenceLabels:string[];
+  liquidityScore:number; liquidityLabels:string[]; orderBlock:{low:number;high:number;direction:'LONG'|'SHORT';timeframe:string;strength:number}|null;
+  liquiditySweep:{direction:'LONG'|'SHORT';side:'HIGH'|'LOW';level:number;time:string;strength:number;reclaimed:boolean}|null;
+  volumeProfileStatus:'AVAILABLE'|'UNAVAILABLE'; reasons:string[];
 };
 
 export type UnifiedDecision={
@@ -23,6 +27,7 @@ export type UnifiedDecision={
 
 const clamp=(n:number)=>Math.max(0,Math.min(100,n));
 function relation(b:MarketBias,d:'LONG'|'SHORT'):{label:'CONFIRM'|'OPPOSE'|'NEUTRAL'}{return {label:b==='NEUTRAL'?'NEUTRAL':b===d?'CONFIRM':'OPPOSE'};}
+function CanalysisLocationGate(strategy:StrategyName){ return strategy!=='PRO_BTB'; }
 function phaseRelation(phase:MarketPhase,strategy:StrategyName):DecisionCandidate['phaseRelation']{
   if(strategy==='MICROMAP') return phase==='CHANNEL'?'PRIMARY':phase==='SPIKE'?'SUPPORTIVE':phase==='RANGE'?'NEUTRAL':'OPPOSE';
   if(strategy==='SP2L') return phase==='SPIKE'?'PRIMARY':phase==='TRANSITION'?'SUPPORTIVE':phase==='CHANNEL'?'NEUTRAL':phase==='RANGE'?'OPPOSE':'NEUTRAL';
@@ -52,12 +57,18 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
   const valid=signals.filter(x=>x.status==='VALID'&&x.direction&&x.entry!=null&&x.stop!=null);
   const candidates=valid.map((s):DecisionCandidate=>{
     const e=enrich(s,context); const conf=s.confluence;
+    const a=Math.max(context.liquidity.atrReference,0.25);
+    const liq=assessLiquidityConfluence(context.liquidity,s.entry!,s.direction!,Math.max(a,0.25));
+    const locBonus=Math.min(liq.score,10);
     return {
-      strategy:s.strategy,direction:s.direction!,score:clamp(e.score+(conf?.score??0)),
+      strategy:s.strategy,direction:s.direction!,score:clamp(e.score+(conf?.score??0)+locBonus),
       entry:s.entry!,stop:s.stop!,signalTime:c.at(-1)!.time,h1Filter:e.h1Filter,m15Relation:e.m15Relation,
       dailyRelation:e.dailyRelation,weeklyRelation:e.weeklyRelation,phaseRelation:e.phaseRelation,
       confluenceScore:conf?.score??0,confluenceLabels:conf?.labels??[],
-      reasons:[s.reason,`H1 filter: ${e.h1Filter}`,`M15: ${e.m15Relation}`,`Daily PA: ${e.dailyRelation}`,`Weekly: ${e.weeklyRelation}`,`Market phase: ${context.phase} → ${e.phaseRelation}`,`M5 role: ${context.m5===s.direction?'aligned':context.m5==='NEUTRAL'?'neutral':'opposed'}`,`M1 role: ${context.m1===s.direction?'aligned':context.m1==='NEUTRAL'?'neutral':'opposed'}`,conf?.labels?.length?`Confluence +${conf.score}: ${conf.labels.join(', ')}`:'No important-level confluence']
+      liquidityScore:liq.score,liquidityLabels:liq.labels,
+      orderBlock:liq.orderBlock?{low:liq.orderBlock.low,high:liq.orderBlock.high,direction:liq.orderBlock.direction,timeframe:liq.orderBlock.timeframe,strength:liq.orderBlock.strength}:null,
+      liquiditySweep:liq.sweep,volumeProfileStatus:context.liquidity.volumeProfile.status,
+      reasons:[s.reason,`H1 filter: ${e.h1Filter}`,`M15: ${e.m15Relation}`,`Daily PA: ${e.dailyRelation}`,`Weekly: ${e.weeklyRelation}`,`Market phase: ${context.phase} → ${e.phaseRelation}`,`M5 role: ${context.m5===s.direction?'aligned':context.m5==='NEUTRAL'?'neutral':'opposed'}`,`M1 role: ${context.m1===s.direction?'aligned':context.m1==='NEUTRAL'?'neutral':'opposed'}`,conf?.labels?.length?`Price confluence +${conf.score}: ${conf.labels.join(', ')}`:'No major price-level confluence',liq.labels.length?`Liquidity/OB context +${liq.score}: ${liq.labels.join(', ')}`:'No nearby liquidity/OB confluence',`Volume profile: ${context.liquidity.volumeProfile.status}`]
     };
   });
   const eligible=candidates.filter(x=>{
@@ -94,7 +105,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     symbol:'XAUUSD',timestamp:c.at(-1)?.time??new Date().toISOString(),context,signals,candidates,
     selection:selection?{strategy:selection.strategy,direction:selection.direction,score:selection.score}:null,
     consensus:{direction,validCount:valid.length,alignedCount:eligible.length,eligibleCount:eligible.length,mode,reason},
-    message:['XAU AI Trading Agent',`Bias: ${context.bias}`,`Phase: ${context.phase}`,`H1 ${context.h1} filter | M15 ${context.m15} structure | M5 ${context.m5} setup | M1 ${context.m1} trigger`,`Daily: ${context.dailyBias} | Weekly: ${context.weeklyBias}`,`Daily PA: ${context.dailyPriceAction.bias} | State: ${context.dailyPriceAction.state} | Confirmed: ${context.dailyPriceAction.confirmed?'YES':'NO'}${context.dailyPriceAction.correction?' | CORRECTION':''} | ${context.dailyPriceAction.reason}`,`M15 H/L: ${context.structure.m15.highLabel??'—'} / ${context.structure.m15.lowLabel??'—'} | State: ${context.structure.m15.state}`,`Mother move: ${context.motherMove?`${context.motherMove.timeframe} ${context.motherMove.direction} strength=${context.motherMove.strength}`:'NONE'}`,`Session: ${context.session}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates: ${candidates.length}`,`Eligible candidates: ${eligible.length}`,`Selected: ${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus: ${mode}${direction?` ${direction}`:''}`,`Reason: ${reason}`,`Economic: ${context.economic.status} / ${context.economic.risk} / ${context.economic.bias}`].join('\n')
+    message:['XAU AI Trading Agent',`Bias: ${context.bias}`,`Phase: ${context.phase}`,`H1 ${context.h1} filter | M15 ${context.m15} structure | M5 ${context.m5} setup | M1 ${context.m1} trigger`,`Daily: ${context.dailyBias} | Weekly: ${context.weeklyBias}`,`Daily PA: ${context.dailyPriceAction.bias} | State: ${context.dailyPriceAction.state} | Confirmed: ${context.dailyPriceAction.confirmed?'YES':'NO'}${context.dailyPriceAction.correction?' | CORRECTION':''} | ${context.dailyPriceAction.reason}`,`M15 H/L: ${context.structure.m15.highLabel??'—'} / ${context.structure.m15.lowLabel??'—'} | State: ${context.structure.m15.state}`,`Mother move: ${context.motherMove?`${context.motherMove.timeframe} ${context.motherMove.direction} strength=${context.motherMove.strength}`:'NONE'}`,`Liquidity/OB: score=${context.liquidity.executionScore} | ${context.liquidity.executionLabels.join(', ')||'none'} | VP=${context.liquidity.volumeProfile.status}`,`Session: ${context.session}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates: ${candidates.length}`,`Eligible candidates: ${eligible.length}`,`Selected: ${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus: ${mode}${direction?` ${direction}`:''}`,`Reason: ${reason}`,`Economic: ${context.economic.status} / ${context.economic.risk} / ${context.economic.bias}`].join('\n')
   };
 }
 

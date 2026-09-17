@@ -3,6 +3,7 @@ import { resample } from '@/engine/indicators';
 import { assessDailyPriceAction, classifyMarketPhase, detectMotherMove, summarizeStructure } from '@/engine/market-structure';
 import { buildImportantLevels } from '@/engine/levels';
 import { buildEconomicContext } from '@/engine/economic';
+import { buildLiquidityContext } from '@/engine/liquidity';
 
 function sessionName(iso:string){
   const h=new Date(iso).getUTCHours();
@@ -30,6 +31,7 @@ export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:
   const dailyb=dailyPA.bias;
   const weeklyb=weeklys.bias;
   const levels=buildImportantLevels(sorted);
+  const liquidityMap=buildLiquidityContext(sorted,levels);
   const vals=[h1b,m15b,m5b,m1b];
   const long=vals.filter(x=>x==='LONG').length,short=vals.filter(x=>x==='SHORT').length;
   const bias:MarketBias=long>short?'LONG':short>long?'SHORT':'NEUTRAL';
@@ -50,7 +52,12 @@ export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:
     liquidity:{
       previousDayHigh:levels.previousDayHigh, previousDayLow:levels.previousDayLow,
       sessionHigh:levels.sessionHigh, sessionLow:levels.sessionLow,
-      rangeHigh:levels.rangeHigh, rangeLow:levels.rangeLow
+      rangeHigh:levels.rangeHigh, rangeLow:levels.rangeLow,
+      pools:liquidityMap.pools, orderBlocks:liquidityMap.orderBlocks, sweeps:liquidityMap.sweeps,
+      volumeProfile:liquidityMap.volumeProfile, executionScore:liquidityMap.executionScore,
+      executionLabels:liquidityMap.executionLabels, nearestLowPool:liquidityMap.nearestLowPool,
+      nearestHighPool:liquidityMap.nearestHighPool, nearestOrderBlock:liquidityMap.nearestOrderBlock,
+      activeSweep:liquidityMap.activeSweep, methodology:liquidityMap.methodology, atrReference:liquidityMap.atrReference
     },
     importantLevels:levels,
     economic:buildEconomicContext(sorted.at(-1)!.time,economicEvents)

@@ -58,6 +58,7 @@ export const STRATEGY_CONFIG = {
       minCloseLocation:0.65,
       breakSwingATR:0.05
     },
-    context:{rangeLookbackBars:25,maxRangeWidthATR:2.8,rangeEdgeToleranceATR:0.25,requireHigherTFSupportWhenH1Neutral:true}
+    context:{rangeLookbackBars:25,maxRangeWidthATR:2.8,rangeEdgeToleranceATR:0.25,requireHigherTFSupportWhenH1Neutral:true},
+    priceAction:{locationMinScore:2,requireLiquidityOrOrderBlock:true,volumeProfileSoftContextOnly:true}
   }
 };

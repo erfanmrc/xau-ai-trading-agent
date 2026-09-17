@@ -75,6 +75,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   let deepAnalysisCount=0,fastGateSkipCount=0;
   let dailyTrendBlockedCandles=0,dailyTrendPrecheckCount=0;
   const dailyPAStates=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
+  let liquidityContextStats={deepAnalyses:0,withSweep:0,withOrderBlock:0,withLiquidityPoolNear:0,volumeProfileAvailable:0};
 
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
@@ -243,7 +244,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       fastGateSkipCount++;
       signal={
         symbol:'XAUUSD',timestamp:c.time,
-        context: { bias:'NEUTRAL',h1:'NEUTRAL',m15:'NEUTRAL',m5:'NEUTRAL',m1:'NEUTRAL',dailyBias:'NEUTRAL',weeklyBias:'NEUTRAL',phase:'TRANSITION',motherMove:null,alignmentScore:0,aligned:false,session:undefined,importantLevels:{round5:Math.round(c.close/5)*5,round10:Math.round(c.close/10)*10,previousDayHigh:null,previousDayLow:null,previousDayMid:null,sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null},liquidity:{previousDayHigh:null,previousDayLow:null,sessionHigh:null,sessionLow:null,rangeHigh:null,rangeLow:null},dailyPriceAction:{state:'UNCLEAR',bias:'NEUTRAL',confirmed:false,entryReady:false,correction:false,score:0,pressure:0,recentImpulse:0,candleQuality:0,reason:'Fast gate skipped deep analysis'},
+        context: { bias:'NEUTRAL',h1:'NEUTRAL',m15:'NEUTRAL',m5:'NEUTRAL',m1:'NEUTRAL',dailyBias:'NEUTRAL',weeklyBias:'NEUTRAL',phase:'TRANSITION',motherMove:null,alignmentScore:0,aligned:false,session:undefined,importantLevels:{round5:Math.round(c.close/5)*5,round10:Math.round(c.close/10)*10,previousDayHigh:null,previousDayLow:null,previousDayMid:null,sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null},liquidity:{previousDayHigh:null,previousDayLow:null,sessionHigh:null,sessionLow:null,rangeHigh:null,rangeLow:null,pools:[],orderBlocks:[],sweeps:[],volumeProfile:{status:'UNAVAILABLE',source:'NONE',poc:null,highVolumeNodes:[],lowVolumeNodes:[],totalVolume:0,binSize:null,reason:'Fast gate skipped deep liquidity analysis'},executionScore:0,executionLabels:[],nearestLowPool:null,nearestHighPool:null,nearestOrderBlock:null,activeSweep:null,methodology:'PRICE_ACTION_PROXY',atrReference:0.25},dailyPriceAction:{state:'UNCLEAR',bias:'NEUTRAL',confirmed:false,entryReady:false,correction:false,score:0,pressure:0,recentImpulse:0,candleQuality:0,reason:'Fast gate skipped deep analysis'},
           economic:{status:'UNAVAILABLE',risk:'NONE',bias:'NEUTRAL',upcoming:[],notes:['Fast gate skipped deep analysis']}
         },
         signals:[
@@ -255,6 +256,13 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         consensus:{direction:null,validCount:0,alignedCount:0,eligibleCount:0,mode:'NO_TRADE',reason:'Fast gate skipped deep strategy analysis'},
         message:'Fast gate skipped deep strategy analysis'
       } as unknown as ReturnType<typeof analyzeUnified>;
+    }
+    if(gate.deepAnalysis){
+      const lm=signal.context.liquidity; liquidityContextStats.deepAnalyses++;
+      if(lm.activeSweep) liquidityContextStats.withSweep++;
+      if(lm.orderBlocks.length) liquidityContextStats.withOrderBlock++;
+      const pa=lm.nearestLowPool!==null||lm.nearestHighPool!==null; if(pa) liquidityContextStats.withLiquidityPoolNear++;
+      if(lm.volumeProfile.status==='AVAILABLE') liquidityContextStats.volumeProfileAvailable++;
     }
     const chosen=signal.selection;
     for(const s of signal.signals){
@@ -276,7 +284,14 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[],
         dailyTrendHighLabel:signal.context.structure?.daily?.highLabel??null,
         dailyTrendLowLabel:signal.context.structure?.daily?.lowLabel??null,
-        dailyTrendState:signal.context.dailyPriceAction?.state??'UNCLEAR'
+        dailyTrendState:signal.context.dailyPriceAction?.state??'UNCLEAR',
+        liquidityScore:candidate?.liquidityScore??signal.context.liquidity?.executionScore??0,
+        liquidityLabels:candidate?.liquidityLabels??signal.context.liquidity?.executionLabels??[],
+        orderBlock:candidate?.orderBlock??(signal.context.liquidity?.nearestOrderBlock??null),
+        liquiditySweep:candidate?.liquiditySweep??(signal.context.liquidity?.activeSweep??null),
+        volumeProfileStatus:signal.context.liquidity?.volumeProfile?.status??'UNAVAILABLE',
+        volumeProfilePoc:signal.context.liquidity?.volumeProfile?.poc??null,
+        liquidityMethodology:signal.context.liquidity?.methodology??'PRICE_ACTION_PROXY'
       });
     }
 
@@ -413,7 +428,8 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     validOpportunities:opportunities.filter(x=>x.status==='VALID'),
     opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
-    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount,dailyPAByDay:[...dailyPAStates.entries()].map(([day,state])=>({day,state:state.state,bias:state.bias,confirmed:state.confirmed,entryReady:state.entryReady,correction:state.correction,score:state.score,pressure:state.pressure,recentImpulse:state.recentImpulse,candleQuality:state.candleQuality,reason:state.reason}))} as any,
+    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount,dailyPAByDay:[...dailyPAStates.entries()].map(([day,state])=>({day,state:state.state,bias:state.bias,confirmed:state.confirmed,entryReady:state.entryReady,correction:state.correction,score:state.score,pressure:state.pressure,recentImpulse:state.recentImpulse,candleQuality:state.candleQuality,reason:state.reason})),
+      liquidityDiagnostics:liquidityContextStats} as any,
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }
