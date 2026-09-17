@@ -63,11 +63,12 @@ export function detectSP2L(c:Candle[],balance=C.balance,spread=0):StrategySignal
   const a=Math.max(atr(c,14),0.05);
   const candidates:{dir:Direction;start:number;end:number;strength:number;expansion:number;displacement:number;efficiency:number;gap:number}[]=[];
 
-  // Look for a mother spike that is recent enough that the current bar can be
-  // the simple pullback or first Leg-2 trigger. Strong candles + breakout are
-  // mandatory; the other measurements are quality modifiers rather than a
-  // stack of independent hard filters.
-  for(let e=end-1;e>=Math.max(4,end-C.analysis.spike.maxSpikeAgeBars);e--){
+  // SP2L is event-based: the current bar must be the simple pullback
+  // immediately after the 3-4 candle mother spike. A completed older setup
+  // is not re-issued on every later bar; those later returns belong to BTB.
+  const eventEnd=end-1;
+  if(eventEnd<4) return {strategy:'SP2L',status:'INVALID',score:0,reason:'No recent SP2L mother-spike event',reasons:['Current bar is not immediately after a complete mother-spike run'],warnings:[],direction:null};
+  for(const e of [eventEnd]){
     for(const d of ['LONG','SHORT'] as const){
       const found=findRecentRun(c,e,d);
       if(!found) continue;
@@ -108,7 +109,11 @@ export function detectSP2L(c:Candle[],balance=C.balance,spread=0):StrategySignal
   if(h1Opp && !originKey) return {strategy:'SP2L',status:'INVALID',score:0,reason:'SP2L blocked by higher-timeframe direction',reasons:[`H1=${rel.h1} opposes ${dir}`,'No strong spike-origin level to justify the counter-context move'],warnings:['H1 remains the primary direction filter'],direction:null};
 
   const pull=c[spikeEnd+1];
-  if(!pull) return {strategy:'SP2L',status:'WATCH',score:60+Math.max(0,rel.score)*4+(originKey?6:0),reason:'Mother spike detected; waiting for the simple pullback candle',reasons:[`${dir} spike: ${run.length} strong candles`,`Pressure=${best.gap.toFixed(2)} ATR`,`Waiting for a simple return from the spike extreme`],warnings:['A complex retracement model is not required'],direction:dir,trigger:breakoutLevel};
+  if(!pull || end!==spikeEnd+1){
+    // The detector is called on the current bar. If the pullback candle is not
+    // exactly this bar, the SP2L event is either not ready or already stale.
+    return {strategy:'SP2L',status:'WATCH',score:60+Math.max(0,rel.score)*4+(originKey?6:0),reason:'Mother spike detected; waiting for the immediate simple pullback candle',reasons:[`${dir} spike: ${run.length} strong candles`,`Pressure=${best.gap.toFixed(2)} ATR`,'SP2L signal is valid only on the first pullback candle'],warnings:['Later returns are handed off to PRO_BTB rather than reusing the old SP2L setup'],direction:dir,trigger:breakoutLevel};
+  }
 
   const touchTol=Math.max(a*0.03,spread*2,0.03);
   const pullCounter=dir==='LONG'?candleDirection(pull)==='SHORT':candleDirection(pull)==='LONG';

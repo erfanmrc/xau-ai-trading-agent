@@ -47,7 +47,10 @@ export function buildStrategyZones(c:Candle[]):StrategyZone[]{
 function buildMotherZone(c:Candle[],minutes:5|15):StrategyZone[] {
   const tf=resample(c,minutes);
   const out:StrategyZone[]=[];
-  if(tf.length<30) return out;
+  // 360 M1 bars produce only 24 M15 candles; requiring 30 would disable
+  // M15 BTB completely during normal backtest windows. The detector itself
+  // only needs a much smaller history and can use the available base range.
+  if(tf.length<18) return out;
   // BTB only needs zones that can still be active. Scanning the entire
   // historical TF series here made every backtest candle increasingly
   // expensive (O(n^2)). Keep a bounded recent tail instead.
@@ -87,15 +90,37 @@ export function buildMultiTimeframeBTBZones(c:Candle[]):StrategyZone[]{
   return out.filter((z,i,a)=>a.findIndex(x=>x.source===z.source&&x.direction===z.direction&&x.endIndex===z.endIndex)===i);
 }
 
-export function touchesZoneAfterDeparture(tf:Candle[],z:StrategyZone):boolean{
-  const last=tf.length-1;
-  if(last<=z.endIndex) return false;
-  const from=Math.max(z.endIndex+1,last-C.analysis.btb.returnWindowBars);
+export function touchesZoneAfterDeparture(raw:Candle[],tf:Candle[],z:StrategyZone):boolean{
+  const zoneEnd=tf[z.endIndex];
+  const current=raw.at(-1);
+  if(!zoneEnd||!current) return false;
+  const zoneEndMs=new Date(zoneEnd.time).getTime();
+  const lastMs=new Date(current.time).getTime();
+  if(lastMs<=zoneEndMs) return false;
+
+  // The mother spike/BTB level is defined on M5/M15, but the actual return
+  // happens on M1. Require a real departure on the raw M1 stream, then allow
+  // the current M1 candle to be the retest. This avoids missing a BTB return
+  // merely because the higher-TF candle has not closed exactly on the zone.
+  const returnMinutes=z.timeframe==='M15'?15:5;
+  const maxReturnMs=C.analysis.btb.returnWindowBars*returnMinutes*60_000;
+  const fromMs=Math.max(zoneEndMs,lastMs-maxReturnMs);
+  const start=raw.findIndex(x=>new Date(x.time).getTime()>fromMs);
+  if(start<0) return false;
+
+  let departedBars=0;
   let departed=false;
-  for(let i=from;i<last;i++){
-    if(z.direction==='LONG'&&tf[i].low>z.high) departed=true;
-    if(z.direction==='SHORT'&&tf[i].high<z.low) departed=true;
+  for(let i=start;i<raw.length-1;i++){
+    const x=raw[i];
+    const away=z.direction==='LONG'?x.low>z.high:x.high<z.low;
+    if(away){
+      departedBars++;
+      if(departedBars>=Math.max(2,C.analysis.btb.minDepartureBars)) departed=true;
+    }else{
+      departedBars=0;
+    }
   }
-  const cur=tf[last];
-  return departed&&cur.high>=z.low&&cur.low<=z.high;
+  if(!departed) return false;
+
+  return current.high>=z.low&&current.low<=z.high;
 }

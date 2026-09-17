@@ -32,14 +32,19 @@ export function detectProBTB(c:Candle[],balance=C.balance,spread=0):StrategySign
   const current=c.at(-1)!;
   const m15=resample(c,15),m5=resample(c,5),a=Math.max(atr(m5,14),0.25);
   const zones=buildMultiTimeframeBTBZones(c).sort((x,y)=>sourceRank(y.source)-sourceRank(x.source)||y.endIndex-x.endIndex);
+  let watchedZone:StrategyZone|null=null;
+  let watchedReason:string|null=null;
   for(const z of zones.slice(0,20)){
     const tf=z.timeframe==='M15'?m15:m5;
     const age=tf.length-1-z.endIndex;
     if(age<1||age>C.analysis.btb.maxZoneAgeBars) continue;
-    if(!touchesZoneAfterDeparture(tf,z)) continue;
+    if(!touchesZoneAfterDeparture(c,tf,z)) continue;
     const d=z.direction;
     const conf=rejection(c,z,d,a);
-    if(!conf.ok) return {strategy:'PRO_BTB',status:'WATCH',score:Math.min(80,z.strength),reason:'BTB retest detected; waiting for rejection confirmation',reasons:[`${z.source} mother-spike breakout level retested`,conf.reason,'M1 is used as trigger context'],warnings:['BTB requires a real departure, return, touch and reversal-strength candle'],direction:d,zone:{low:z.low,high:z.high,source:z.source}};
+    if(!conf.ok){
+      if(!watchedZone || z.strength>watchedZone.strength){ watchedZone=z; watchedReason=conf.reason; }
+      continue;
+    }
     const entry=current.close;
     const buffer=Math.max(a*0.04,spread*2,0.03);
     const stop=d==='LONG'?Math.min(z.low,current.low)-buffer:Math.max(z.high,current.high)+buffer;
@@ -59,7 +64,10 @@ export function detectProBTB(c:Candle[],balance=C.balance,spread=0):StrategySign
     const reasons=[`${z.source} derived from a mother-spike breakout`,`Return reached the breakout/OB zone`,`M1 rejection candle confirmed`,h1===d?'H1 agrees with BTB direction':h1==='NEUTRAL'?'H1 neutral':'H1 context opposes but is handled by decision filter',m15b===d?'M15 supports direction':m15b==='NEUTRAL'?'M15 neutral':'M15 opposes direction',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
     return {strategy:'PRO_BTB',status:'VALID',score,reason:`BTB confirmed on ${z.timeframe}`,reasons,warnings:[],direction:d,entry,entry2:risk.x2Entry??null,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,zone:{low:z.low,high:z.high,source:z.source},confluence};
   }
+  if(watchedZone){
+    return {strategy:'PRO_BTB',status:'WATCH',score:Math.min(80,watchedZone.strength),reason:'BTB retest detected; waiting for rejection confirmation',reasons:[`${watchedZone.source} mother-spike breakout level retested`,watchedReason??'Rejection confirmation incomplete','M1 is used as trigger context'],warnings:['BTB requires a real departure, return, touch and reversal-strength candle'],direction:watchedZone.direction,zone:{low:watchedZone.low,high:watchedZone.high,source:watchedZone.source}};
+  }
   const watch=zones.slice(0,12).find(z=>{const tf=z.timeframe==='M15'?m15:m5;const age=tf.length-1-z.endIndex;return age>=0&&age<=C.analysis.btb.maxZoneAgeBars&&current.high>=z.low&&current.low<=z.high;});
   if(watch) return {strategy:'PRO_BTB',status:'WATCH',score:Math.min(70,watch.strength),reason:'Price is approaching/testing an active BTB mother-spike level',reasons:[`${watch.source} breakout/OB level is active`,'Waiting for a confirmed rejection'],warnings:[],direction:watch.direction,zone:{low:watch.low,high:watch.high,source:watch.source}};
-  return {strategy:'PRO_BTB',status:'INVALID',score:0,reason:'No BTB retest setup',reasons:['No active M5/M15 mother-spike breakout level has a valid return'],warnings:[],direction:null};
+  return {strategy:'PRO_BTB',status:'INVALID',score:0,reason:'No BTB retest setup',reasons:[`No active M5/M15 mother-spike breakout level has a valid return`, `BTB zones detected in current window: ${zones.length}`],warnings:[],direction:null};
 }
