@@ -10,7 +10,7 @@ export const STRATEGY_CONFIG = {
       bodyToRangeMin:0.60, closeLocationMin:0.72, oppositeWickMax:0.25,
       expansionVsMedian:1.10, minDisplacementATR:0.65, minEfficiency:0.48,
       minPressureGapATR:0.04, minNonOverlapGapATR:0.03,
-      maxExtensionATR:1.75, maxStopATR:2.00,
+      maxExtensionATR:6.00, maxStopATR:2.00,
       maxReturnBeyondBreakoutATR:0.15, maxReturnDepth:0.60, maxReturnCandleATR:0.90,
       minLeg2BodyToRange:0.55, leg2CloseInDirection:0.68,
       maxSpikeAgeBars:18, minContextScore:1,

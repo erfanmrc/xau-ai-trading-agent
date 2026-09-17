@@ -12,16 +12,19 @@ function sourceRank(s:StrategyZone['source']){return s==='BTB_15M'?3:2;}
 function rejection(c:Candle[],z:StrategyZone,d:'LONG'|'SHORT',a:number){
   if(c.length<3) return {ok:false,reason:'Not enough candles for BTB confirmation'};
   const prev=c.at(-2)!,cur=c.at(-1)!;
-  const touchPrev=d==='LONG'?prev.low<=z.high+a*0.12&&prev.high>=z.low:prev.high>=z.low-a*0.12&&prev.low<=z.high;
-  const touchCur=d==='LONG'?cur.low<=z.high+a*0.08&&cur.high>=z.low:cur.high>=z.low-a*0.08&&cur.low<=z.high;
-  const prevAgainst=d==='LONG'?candleDirection(prev)==='SHORT':candleDirection(prev)==='LONG';
+  const touchPrev=d==='LONG'?prev.low<=z.high+a*0.15&&prev.high>=z.low:prev.high>=z.low-a*0.15&&prev.low<=z.high;
+  const touchCur=d==='LONG'?cur.low<=z.high+a*0.10&&cur.high>=z.low:cur.high>=z.low-a*0.10&&cur.low<=z.high;
+  const touch=touchPrev||touchCur;
   const dir=candleDirection(cur)===d;
   const body=bodyRatio(cur)>=C.analysis.btb.minM1RejectionBodyToRange;
   const close=d==='LONG'?closeLocation(cur)>=C.analysis.btb.minM1RejectionCloseInDirection:closeLocation(cur)<=1-C.analysis.btb.minM1RejectionCloseInDirection;
   const breakZone=d==='LONG'?cur.close>=z.high+a*C.analysis.btb.rejectionCloseATR:cur.close<=z.low-a*C.analysis.btb.rejectionCloseATR;
   const awayFromZone=d==='LONG'?cur.close>z.high:cur.close<z.low;
-  const twoStep=prevAgainst&&touchPrev&&dir&&breakZone;
-  return {ok:twoStep&&body&&close&&awayFromZone,reason:`twoStep=${twoStep?'yes':'no'}, body=${body?'yes':'no'}, close=${close?'yes':'no'}`,touch:touchPrev||touchCur};
+  // M5/M15 defines the BTB zone and the return. M1 only needs to supply a
+  // decisive rejection; the previous M1 bar does not have to be a second
+  // touch or an opposite candle.
+  const valid=touch&&dir&&body&&close&&breakZone&&awayFromZone;
+  return {ok:valid,reason:`touch=${touch?'yes':'no'}, direction=${dir?'yes':'no'}, body=${body?'yes':'no'}, close=${close?'yes':'no'}, break=${breakZone?'yes':'no'}`,touch};
 }
 
 export function detectProBTB(c:Candle[],balance=C.balance,spread=0):StrategySignal{
@@ -53,7 +56,7 @@ export function detectProBTB(c:Candle[],balance=C.balance,spread=0):StrategySign
     if(h1!==d&&h1!=='NEUTRAL') score-=25;
     if(m15b!==d&&m15b!=='NEUTRAL') score-=5;
     score=clamp(score);
-    const reasons=[`${z.source} derived from a mother-spike breakout`,`Return reached the breakout/OB zone`,`Two-step rejection confirmed`,h1===d?'H1 agrees with BTB direction':h1==='NEUTRAL'?'H1 neutral':'H1 context opposes but is handled by decision filter',m15b===d?'M15 supports direction':m15b==='NEUTRAL'?'M15 neutral':'M15 opposes direction',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
+    const reasons=[`${z.source} derived from a mother-spike breakout`,`Return reached the breakout/OB zone`,`M1 rejection candle confirmed`,h1===d?'H1 agrees with BTB direction':h1==='NEUTRAL'?'H1 neutral':'H1 context opposes but is handled by decision filter',m15b===d?'M15 supports direction':m15b==='NEUTRAL'?'M15 neutral':'M15 opposes direction',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
     return {strategy:'PRO_BTB',status:'VALID',score,reason:`BTB confirmed on ${z.timeframe}`,reasons,warnings:[],direction:d,entry,entry2:risk.x2Entry??null,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,zone:{low:z.low,high:z.high,source:z.source},confluence};
   }
   const watch=zones.slice(0,12).find(z=>{const tf=z.timeframe==='M15'?m15:m5;const age=tf.length-1-z.endIndex;return age>=0&&age<=C.analysis.btb.maxZoneAgeBars&&current.high>=z.low&&current.low<=z.high;});

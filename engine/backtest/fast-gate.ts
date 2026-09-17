@@ -58,8 +58,8 @@ function likelyBTB(c:Candle[]){
   // BTB still needs a directional rejection impulse, but we avoid firing the
   // deep engine for every ordinary alternating candle. Zone validation remains
   // inside the real PRO_BTB detector.
-  const long=strongForEntry(last,'LONG') && candleDirection(prev)==='SHORT' && expansion;
-  const short=strongForEntry(last,'SHORT') && candleDirection(prev)==='LONG' && expansion;
+  const long=strongForEntry(last,'LONG') && expansion;
+  const short=strongForEntry(last,'SHORT') && expansion;
   return long||short;
 }
 

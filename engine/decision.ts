@@ -60,7 +60,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
       reasons:[s.reason,`H1 filter: ${e.h1Filter}`,`M15: ${e.m15Relation}`,`Daily: ${e.dailyRelation}`,`Weekly: ${e.weeklyRelation}`,`Market phase: ${context.phase} → ${e.phaseRelation}`,`M5 role: ${context.m5===s.direction?'aligned':context.m5==='NEUTRAL'?'neutral':'opposed'}`,`M1 role: ${context.m1===s.direction?'aligned':context.m1==='NEUTRAL'?'neutral':'opposed'}`,conf?.labels?.length?`Confluence +${conf.score}: ${conf.labels.join(', ')}`:'No important-level confluence']
     };
   });
-  const eligible=candidates.filter(x=>x.h1Filter!=='BLOCK' && !(context.dailyBias!=='NEUTRAL'&&context.weeklyBias!=='NEUTRAL'&&context.dailyBias!==x.direction&&context.weeklyBias!==x.direction));
+  const eligible=candidates.filter(x=>x.h1Filter!=='BLOCK');
   // Strategy selection follows the market-cycle hierarchy: an active mother-spike entry (SP2L)
   // is preferred during SPIKE; otherwise BTB is the re-entry mechanism; MicroMAP is for CHANNEL.
   const ranked=eligible.slice().sort((a,b)=>{

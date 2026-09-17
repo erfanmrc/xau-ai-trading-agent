@@ -2,7 +2,7 @@ import {Candle} from "@/types/market";
 const BASE="https://api.twelvedata.com";
 function apiKey(){const k=process.env.TWELVE_DATA_API_KEY;if(!k)throw new Error("TWELVE_DATA_API_KEY is not configured");return k;}
 async function request<T>(path:string):Promise<T>{
- const r=await fetch(`${BASE}${path}${path.includes("?")?"&":"?"}apikey=${encodeURIComponent(apiKey())}`,{cache:"no-store"});
+ const r=await fetch(`${BASE}${path}${path.includes("?")?"&":"?"}apikey=${encodeURIComponent(apiKey())}`,{cache:"no-store",signal:AbortSignal.timeout(20000)});
  if(!r.ok)throw new Error(`Twelve Data HTTP ${r.status}`);
  const d=await r.json(); if(d.status==="error")throw new Error(d.message||"Twelve Data error"); return d;
 }

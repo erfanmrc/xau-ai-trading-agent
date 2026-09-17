@@ -18,7 +18,12 @@ export async function GET(req:Request){
   try {
     const url=new URL(req.url);
     const requested=Math.max(1500,Math.min(5000,Number(url.searchParams.get('candles')||5000)));
+    const fetchStarted=Date.now();
     const [candles,dailyCandles]=await Promise.all([getXauUsdCandles('1min',requested),getXauUsdCandles('1day',120)]);
-    return NextResponse.json({ok:true,backtest:runBacktest({candles,dailyCandles})});
+    const dataFetchMs=Date.now()-fetchStarted;
+    const engineStarted=Date.now();
+    const backtest=runBacktest({candles,dailyCandles});
+    const engineMs=Date.now()-engineStarted;
+    return NextResponse.json({ok:true,backtest,diagnostics:{dataFetchMs,engineMs,totalMs:dataFetchMs+engineMs,candleCount:candles.length,dailyCandleCount:dailyCandles.length}});
   } catch(e){return NextResponse.json({ok:false,error:e instanceof Error?e.message:'Backtest data error'},{status:500});}
 }

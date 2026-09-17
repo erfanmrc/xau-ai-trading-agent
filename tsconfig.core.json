@@ -1,0 +1,4 @@
+{
+  "compilerOptions":{"target":"ES2022","module":"CommonJS","moduleResolution":"Node","strict":true,"esModuleInterop":true,"skipLibCheck":true,"baseUrl":".","paths":{"@/*":["./*"]},"outDir":"tsout"},
+  "include":["engine/**/*.ts","agents/**/*.ts","config/**/*.ts","types/**/*.ts","data/**/*.ts"]
+}

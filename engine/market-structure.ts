@@ -71,9 +71,12 @@ export function detectMotherMoveOnTimeframe(c:Candle[],tf:'M1'|'M5'|'M15',maxAge
       const pressureRaw=d==='LONG' ? Math.min(...laterCloses)-first.close : first.close-Math.max(...laterCloses);
       const pressure=pressureRaw/Math.max(a,1e-9);
       const nonOverlapGap=d==='LONG'
-        ? Math.min(...run.slice(1).map(x=>x.low))-first.close
-        : first.close-Math.max(...run.slice(1).map(x=>x.high));
-      if(expansion<1.10 || displacement<a*0.65 || efficiency<0.48 || pressure<0.04 || nonOverlapGap<a*0.03) continue;
+        ? Math.min(...run.slice(1).map(x=>x.close))-first.close
+        : first.close-Math.max(...run.slice(1).map(x=>x.close));
+      // Keep the mother-move definition faithful to the chart concept:
+      // strong directional candles + breakout are primary; pressure/gap and
+      // efficiency are quality measures, not five separate hard filters.
+      if(displacement<a*0.45 || efficiency<0.38 || expansion<0.95) continue;
       const extreme=d==='LONG'?Math.max(...run.map(x=>x.high)):Math.min(...run.map(x=>x.low));
       const legSize=Math.abs(extreme-(d==='LONG'?pre.high:pre.low));
       const strength=Math.round(Math.min(100,54+count*8+(expansion-1)*20+efficiency*20+Math.min(pressure,1)*6));
