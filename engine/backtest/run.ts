@@ -247,9 +247,9 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         entry:s.entry??null,stop:s.stop??null,h1:signal.context.h1,m15:signal.context.m15,m5:signal.context.m5,m1:signal.context.m1,
         dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias,phase:signal.context.phase,phaseRelation:candidate?.phaseRelation??'NEUTRAL',
         confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[],
-        dailyTrendHighLabel:signal.context.structure.daily.highLabel,
-        dailyTrendLowLabel:signal.context.structure.daily.lowLabel,
-        dailyTrendState:signal.context.structure.daily.state
+        dailyTrendHighLabel:signal.context.structure?.daily?.highLabel??null,
+        dailyTrendLowLabel:signal.context.structure?.daily?.lowLabel??null,
+        dailyTrendState:signal.context.structure?.daily?.state??'UNCLEAR'
       });
     }
 
