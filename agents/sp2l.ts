@@ -19,17 +19,17 @@ function strong(c:Candle,d:Direction){
 
 function relationScore(c:Candle[],d:Direction){
   const m5=resample(c,5),m15=resample(c,15),h1=resample(c,60);
-  const daily=resample(c,1440);
   const h1b=summarizeStructure(h1,80).bias,m15b=summarizeStructure(m15,80).bias,m5b=summarizeStructure(m5,80).bias;
-  const db=daily.length>=5?summarizeStructure(daily,30).bias:'NEUTRAL';
+  // Daily price action is computed once in buildContext/UnifiedDecision.
+  // This detector used to resample the M1 window into 1440-minute candles;
+  // with a 240-360 minute window that can never produce the 5 daily candles
+  // required below, so it always returned NEUTRAL while adding substantial cost.
   let score=0;
   if(h1b===d) score+=2;
   if(m15b===d) score+=1;
   if(m5b===d) score+=1;
-  if(db===d) score+=1;
   if(h1b!==d&&h1b!=='NEUTRAL') score-=2;
-  if(db!==d&&db!=='NEUTRAL') score-=1;
-  return {score,h1:h1b,m15:m15b,m5:m5b,daily:db};
+  return {score,h1:h1b,m15:m15b,m5:m5b,daily:'NEUTRAL' as const};
 }
 
 function nearOriginLevel(c:Candle[],price:number,a:number){

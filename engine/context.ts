@@ -29,6 +29,7 @@ export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:
   const dailyPA=assessDailyPriceAction(daily);
   const dailyb=dailyPA.bias;
   const weeklyb=weeklys.bias;
+  const levels=buildImportantLevels(sorted);
   const vals=[h1b,m15b,m5b,m1b];
   const long=vals.filter(x=>x==='LONG').length,short=vals.filter(x=>x==='SHORT').length;
   const bias:MarketBias=long>short?'LONG':short>long?'SHORT':'NEUTRAL';
@@ -47,11 +48,11 @@ export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:
     phase:classifyMarketPhase(sorted),motherMove,alignmentScore,aligned,
     session:sessionName(sorted.at(-1)!.time),
     liquidity:{
-      previousDayHigh:buildImportantLevels(sorted).previousDayHigh, previousDayLow:buildImportantLevels(sorted).previousDayLow,
-      sessionHigh:buildImportantLevels(sorted).sessionHigh, sessionLow:buildImportantLevels(sorted).sessionLow,
-      rangeHigh:buildImportantLevels(sorted).rangeHigh, rangeLow:buildImportantLevels(sorted).rangeLow
+      previousDayHigh:levels.previousDayHigh, previousDayLow:levels.previousDayLow,
+      sessionHigh:levels.sessionHigh, sessionLow:levels.sessionLow,
+      rangeHigh:levels.rangeHigh, rangeLow:levels.rangeLow
     },
-    importantLevels:buildImportantLevels(sorted),
+    importantLevels:levels,
     economic:buildEconomicContext(sorted.at(-1)!.time,economicEvents)
   };
 }
