@@ -63,3 +63,6 @@ The backtest records every strategy evaluation and reports:
 When the same candle touches both stop and target, the engine resolves the candle conservatively as stop-first because tick ordering is unavailable.
 
 Batch 9 optimization: SP2L requires Leg-2 candle to break the return-candle extreme; BTB M1 uses a two-step retest/rejection sequence and avoids chase entries beyond a zone-distance ATR cap; M5/M1 disagreement is a stronger score penalty, not a hard filter; X2 remains deferred and is not counted until triggered.
+
+
+Batch 10 integrity patch: Twelve Data intraday XAU data is requested in UTC; X2 activation uses prior completed candle close for favorable-move confirmation to avoid intrabar ordering ambiguity.

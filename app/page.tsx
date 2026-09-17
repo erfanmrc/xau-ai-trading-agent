@@ -1,6 +1,6 @@
 export default function Home(){
  return <main style={{maxWidth:980,margin:'0 auto',padding:32}}>
-  <h1>XAU AI Trading Agent — Batch 7</h1>
+  <h1>XAU AI Trading Agent — Batch 10</h1>
   <p>SP2L + PRO_BTB + strict Micro-MAP execution engine with permissive single-strategy entries.</p>
   <p>MTF roles: H1 directional filter → M15 structure → M5 setup context → M1 trigger.</p>
   <p>Entry confluence: daily round numbers + important mean/average levels can strengthen a signal.</p>

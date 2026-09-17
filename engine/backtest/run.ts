@@ -108,8 +108,13 @@ export function runBacktest(input:BacktestInput):BacktestResult {
 
     if(open){
       const long=open.direction==='LONG';
-      const priceFavorable=long?Math.max(0,c.high-open.entry):Math.max(0,open.entry-c.low);
-      open.favorableMove=Math.max(open.favorableMove,priceFavorable);
+      // Conservative candle-by-candle X2 model: require a completed candle
+      // CLOSE to establish the favorable move before allowing a later candle
+      // to trigger the midpoint add-on. This avoids assuming intrabar order
+      // when one OHLC candle touches both the favorable threshold and X2.
+      const prior=candles[i-1];
+      const closeFavorable=prior ? (long?Math.max(0,prior.close-open.entry):Math.max(0,open.entry-prior.close)) : 0;
+      open.favorableMove=Math.max(open.favorableMove,closeFavorable);
       const firstStopDistance=pipsRisk(open.entry,open.stop,open.direction);
       const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*C.analysis.execution.minFavorableRForX2);
       const x2CanActivate=i>open.entryBar && open.favorableMove>=favorableThreshold;
