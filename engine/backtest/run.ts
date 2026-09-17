@@ -226,7 +226,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     // The Daily H/L structure remains available for execution/levels only.
     dailyTrendPrecheckCount++;
     const dailyPA=getDailyPriceActionForDay(currentDay);
-    if(C.analysis.spike.requireDailyTrend && (!dailyPA.confirmed || !dailyPA.entryReady || dailyPA.bias==='NEUTRAL' || dailyPA.correction)){
+    if(C.analysis.spike.requireDailyTrend && (!dailyPA.confirmed || dailyPA.entryReady === false || dailyPA.bias==='NEUTRAL' || dailyPA.correction)){
       dailyTrendBlockedCandles++;
       addRejection(`Daily price action is ${dailyPA.state}; ${dailyPA.reason}`);
       continue;
