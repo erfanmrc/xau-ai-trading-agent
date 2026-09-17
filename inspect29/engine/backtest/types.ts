@@ -85,7 +85,7 @@ export type BacktestTrade={
   diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; exitReason?:'STOP'|'TARGET'|'EOD'; targetReached?:boolean; plannedRR?:number; leg1Size?:number; dailyTrendState?:string; };
 };
 
-export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number;dailyPAByDay?:{day:string;state:string;bias:string;confirmed:boolean;correction:boolean;score:number;pressure:number;recentImpulse:number;candleQuality:number;reason:string}[]};
+export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number};
 
 export type BacktestResult={
   config:BacktestConfig;

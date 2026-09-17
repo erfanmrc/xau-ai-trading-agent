@@ -162,127 +162,78 @@ export function assessDailyPriceAction(c:Candle[]): import('@/types/market').Dai
     state,bias:'NEUTRAL',confirmed:false,correction:false,score:0,pressure:0,recentImpulse:0,candleQuality:0,
     reason:state==='RANGE'?'Daily price action is balanced/ranging':'Insufficient completed daily price-action history'
   });
-
   const src=(c??[]).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
-  if(src.length<8) return empty();
-
-  // Daily direction is a price-action regime, not a swing-label classifier.
-  // Use a broad 12-day backdrop plus a recent 5-day pressure check. A single
-  // small opposite candle must NOT flip a strong trend into CORRECTION.
-  const w=src.slice(-12);
+  if(src.length<6) return empty();
+  const w=src.slice(-10);
   const ranges=w.map(x=>Math.max(x.high-x.low,1e-9));
-  const med=Math.max(median(ranges),1e-9);
-  const bodyRatios=w.map(x=>Math.abs(x.close-x.open)/Math.max(x.high-x.low,1e-9));
+  const med=median(ranges);
+  const bodyQuality=w.map(x=>Math.abs(x.close-x.open)/Math.max(x.high-x.low,1e-9));
   const signedBodies=w.map(x=>x.close>x.open?Math.abs(x.close-x.open):x.close<x.open?-Math.abs(x.close-x.open):0);
+  const totalBody=signedBodies.reduce((a,b)=>a+b,0);
   const totalRange=ranges.reduce((a,b)=>a+b,0);
-  const pressure=signedBodies.reduce((a,b)=>a+b,0)/Math.max(totalRange,1e-9);
-  const recent=w.slice(-5);
-  const prior=w.slice(-10,-2);
-  const recentRanges=recent.map(x=>Math.max(x.high-x.low,1e-9));
-  const recentMedian=Math.max(median(recentRanges),1e-9);
-  const recentLongCount=recent.filter(x=>x.close>x.open).length;
-  const recentShortCount=recent.filter(x=>x.close<x.open).length;
-  const recentBodyPressure=recent.reduce((sum,x)=>sum+(x.close-x.open),0)/Math.max(recent.reduce((sum,x)=>sum+(x.high-x.low),0),1e-9);
-  const priorBodyPressure=prior.length?prior.reduce((sum,x)=>sum+(x.close-x.open),0)/Math.max(prior.reduce((sum,x)=>sum+(x.high-x.low),0),1e-9):0;
-  const firstClose=w[0].close;
-  const lastClose=w.at(-1)!.close;
-  const netMove=(lastClose-firstClose)/med;
-  const recentNet=(lastClose-w.at(-6)!.close)/recentMedian;
-  const candleQuality=bodyRatios.reduce((a,b)=>a+b,0)/bodyRatios.length;
-  const directionalQuality = w.filter(x=>{
-    const br=Math.abs(x.close-x.open)/Math.max(x.high-x.low,1e-9);
-    const cl=closeLocation(x);
-    return br>=0.55 && (x.close>x.open?cl>=0.65:x.close<x.open?cl<=0.35:false);
-  }).length / w.length;
-  const closeProgress=Math.abs(netMove);
-  const expansion=(recentRanges.reduce((a,b)=>a+b,0)/(recentRanges.length*med));
+  const pressure=totalBody/Math.max(totalRange,1e-9);
+  const last5=w.slice(-5), last3=w.slice(-3);
+  const long5=last5.filter(x=>x.close>x.open).length;
+  const short5=last5.filter(x=>x.close<x.open).length;
+  const last3Pressure=last3.reduce((sum,x)=>sum+(x.close>x.open?1:x.close<x.open?-1:0),0)/3;
+  const firstClose=w[0].close, lastClose=w.at(-1)!.close;
+  const netDisplacement=(lastClose-firstClose)/Math.max(med,1e-9);
+  const recentImpulse=(last3.reduce((sum,x)=>sum+(x.close-x.open),0))/Math.max(med,1e-9);
+  const candleQuality=bodyQuality.reduce((a,b)=>a+b,0)/bodyQuality.length;
+  const closeProgress=Math.abs(netDisplacement);
+  const expansion=w.slice(-3).map(x=>x.high-x.low).reduce((a,b)=>a+b,0)/(3*Math.max(med,1e-9));
+  const last=w.at(-1)!;
+  const prev=w.at(-2)!;
+  const prevMid=(prev.high+prev.low)/2;
+  const lastBodyRatio=Math.abs(last.close-last.open)/Math.max(last.high-last.low,1e-9);
 
-  const longPressure=Math.max(0,pressure)*100;
-  const shortPressure=Math.max(0,-pressure)*100;
-  const longMove=Math.max(0,netMove)*2.5;
-  const shortMove=Math.max(0,-netMove)*2.5;
-  const longRecentMoveScore=Math.max(0,recentNet)*4;
-  const shortRecentMoveScore=Math.max(0,-recentNet)*4;
-  const longFollow=Math.max(0,recentBodyPressure)*70;
-  const shortFollow=Math.max(0,-recentBodyPressure)*70;
-  const longCount=recentLongCount*2.5;
-  const shortCount=recentShortCount*2.5;
-  const longScore=longPressure+longMove+longRecentMoveScore+longFollow+longCount+directionalQuality*10;
-  const shortScore=shortPressure+shortMove+shortRecentMoveScore+shortFollow+shortCount+directionalQuality*10;
+  // Price-action trend model: directional pressure + close progression + recent impulse.
+  // Indicators/MA labels are deliberately excluded. H/L swing labels are also not used
+  // for the Daily direction gate; they remain available for lower-timeframe execution levels.
+  const longScore = (pressure>0?pressure*120:0) + Math.max(netDisplacement,0)*5 + Math.max(recentImpulse,0)*4 + long5*3 + Math.max(last3Pressure,0)*8 + Math.max(expansion-1,0)*4;
+  const shortScore = (pressure<0?-pressure*120:0) + Math.max(-netDisplacement,0)*5 + Math.max(-recentImpulse,0)*4 + short5*3 + Math.max(-last3Pressure,0)*8 + Math.max(expansion-1,0)*4;
   const directionalScore=Math.max(longScore,shortScore);
+  const oppositeCount=longScore>shortScore?short5:long5;
   const dominant=longScore>=shortScore?'LONG':'SHORT';
-  const dominantScore=dominant==='LONG'?longScore:shortScore;
-  const opposingScore=dominant==='LONG'?shortScore:longScore;
-  const scoreGap=dominantScore-opposingScore;
+  const balanced=Math.abs(longScore-shortScore)<12 && Math.abs(pressure)<0.10 && closeProgress<1.2;
+  const enoughPressure=Math.abs(pressure)>=0.16;
+  const enoughProgress=closeProgress>=0.85;
+  const enoughRecentImpulse=Math.abs(recentImpulse)>=0.55;
+  const enoughCandleQuality=candleQuality>=0.50;
 
-  // A trend must show several independent price-action qualities, but the
-  // thresholds are intentionally moderate so one corrective day does not
-  // suppress an otherwise directional multi-day regime.
-  const enoughPressure=Math.abs(pressure)>=0.075;
-  const enoughMove=closeProgress>=0.65;
-  const enoughRecent=Math.abs(recentBodyPressure)>=0.045 || Math.abs(recentNet)>=0.35;
-  const enoughQuality=candleQuality>=0.44 && directionalQuality>=0.36;
-  const enoughFollowThrough=Math.max(recentLongCount,recentShortCount)>=3 || Math.abs(recentBodyPressure)>=0.065;
-  const confirmedBase=enoughPressure && enoughMove && enoughRecent && enoughQuality && enoughFollowThrough && scoreGap>=8 && directionalScore>=30;
+  if(balanced && !enoughPressure) return {...empty('RANGE'),score:Number(Math.max(longScore,shortScore).toFixed(1)),pressure:Number(pressure.toFixed(4)),recentImpulse:Number(recentImpulse.toFixed(3)),candleQuality:Number(candleQuality.toFixed(3))};
 
-  if(!confirmedBase){
-    const balanced=Math.abs(pressure)<0.07 && Math.abs(netMove)<0.65 && Math.abs(recentBodyPressure)<0.05 && scoreGap<10;
+  const confirmedDirectional = enoughPressure && enoughProgress && enoughRecentImpulse && enoughCandleQuality && directionalScore>=28 && Math.max(long5,short5)>=3;
+  if(confirmedDirectional){
+    const counterLast = dominant==='LONG' ? last.close<last.open : last.close>last.open;
+    const counterIsSmall = lastBodyRatio<0.50 && (dominant==='LONG' ? last.close>=prevMid : last.close<=prevMid);
+    if(counterLast && counterIsSmall){
+      return {
+        state:'CORRECTION',bias:dominant,confirmed:true,correction:true,score:Number(directionalScore.toFixed(1)),
+        pressure:Number(pressure.toFixed(4)),recentImpulse:Number(recentImpulse.toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
+        reason:`Daily ${dominant} price-action trend remains intact, but the latest candles show a controlled correction`
+      };
+    }
     return {
-      state:balanced?'RANGE':'UNCLEAR',bias:'NEUTRAL',confirmed:false,correction:false,
-      score:Number(directionalScore.toFixed(1)),pressure:Number(pressure.toFixed(4)),
-      recentImpulse:Number((recentBodyPressure*recentMedian).toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
-      reason:balanced?'Daily price action is balanced/ranging':'Daily price action lacks sufficient directional pressure and follow-through'
+      state:dominant==='LONG'?'UPTREND':'DOWNTREND',bias:dominant,confirmed:true,correction:false,score:Number(directionalScore.toFixed(1)),
+      pressure:Number(pressure.toFixed(4)),recentImpulse:Number(recentImpulse.toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
+      reason:`Daily ${dominant} trend confirmed by directional pressure, close progression and recent impulse`
     };
   }
 
-  // Detect a real correction only when the counter-pressure is persistent and
-  // retraces a meaningful fraction of the recent directional move. A single
-  // small counter candle is treated as noise, not correction.
-  const dominantSign=dominant==='LONG'?1:-1;
-  const counterLast5=recent.filter(x=>Math.sign(x.close-x.open)===-dominantSign).length;
-  const counterBody5=recent.reduce((sum,x)=>sum+(Math.sign(x.close-x.open)===-dominantSign?Math.abs(x.close-x.open):0),0);
-  const dominantBody5=recent.reduce((sum,x)=>sum+(Math.sign(x.close-x.open)===dominantSign?Math.abs(x.close-x.open):0),0);
-  const recentCounterRatio=counterBody5/Math.max(dominantBody5+counterBody5,1e-9);
-
-  const priorCloses=(w.slice(0,-2).map(x=>x.close));
-  const anchor=dominant==='LONG'?Math.max(...priorCloses):Math.min(...priorCloses);
-  const startAnchor=priorCloses[0]??w[0].close;
-  const impulse=Math.abs(anchor-startAnchor);
-  const retrace=Math.abs(lastClose-anchor)/Math.max(impulse,med);
-  const persistentCorrection=counterLast5>=2 && recentCounterRatio>=0.28 && Math.abs(recentBodyPressure)>=0.075 && retrace>=0.20;
-
-  // A true reversal of daily pressure requires multiple strong opposite closes,
-  // not merely a label change. This becomes the new dominant direction only when
-  // the recent pressure clearly overtakes the prior regime.
-  const reversalBody=recent.filter(x=>{
-    const br=Math.abs(x.close-x.open)/Math.max(x.high-x.low,1e-9);
-    const goodClose=dominant==='LONG'?x.close<=x.open && closeLocation(x)<=0.35:x.close>=x.open && closeLocation(x)>=0.65;
-    return br>=0.58 && goodClose;
-  }).length;
-  const reversedPressure=dominant==='LONG'?recentBodyPressure<=-0.10:recentBodyPressure>=0.10;
-  const reversedMove=dominant==='LONG'?recentNet<=-0.90:recentNet>=0.90;
-  if(reversalBody>=2 && reversedPressure && reversedMove && opposingScore>dominantScore*0.95){
-    const newBias=dominant==='LONG'?'SHORT':'LONG' as 'LONG'|'SHORT';
+  // Strong opposite candle against an otherwise directional backdrop is a warning,
+  // but not enough by itself to flip the daily trend. Treat it as correction.
+  if((longScore>=28||shortScore>=28) && oppositeCount>=2){
     return {
-      state:newBias==='LONG'?'UPTREND':'DOWNTREND',bias:newBias,confirmed:true,correction:false,
-      score:Number((Math.max(opposingScore,dominantScore)).toFixed(1)),pressure:Number(pressure.toFixed(4)),
-      recentImpulse:Number((recentBodyPressure*recentMedian).toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
-      reason:`Daily ${newBias} price action has replaced the prior regime with sustained opposite pressure and follow-through`
-    };
-  }
-
-  if(persistentCorrection){
-    return {
-      state:'CORRECTION',bias:dominant,confirmed:true,correction:true,score:Number(dominantScore.toFixed(1)),
-      pressure:Number(pressure.toFixed(4)),recentImpulse:Number((recentBodyPressure*recentMedian).toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
-      reason:`Daily ${dominant} trend remains intact, but price is in a meaningful corrective phase`
+      state:'CORRECTION',bias:dominant,confirmed:true,correction:true,score:Number(directionalScore.toFixed(1)),
+      pressure:Number(pressure.toFixed(4)),recentImpulse:Number(recentImpulse.toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
+      reason:`Daily ${dominant} pressure exists, but price action is currently corrective rather than entry-ready`
     };
   }
 
   return {
-    state:dominant==='LONG'?'UPTREND':'DOWNTREND',bias:dominant,confirmed:true,correction:false,
-    score:Number(dominantScore.toFixed(1)),pressure:Number(pressure.toFixed(4)),
-    recentImpulse:Number((recentBodyPressure*recentMedian).toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
-    reason:`Daily ${dominant} trend confirmed by price pressure, displacement, candle quality and follow-through`
+    state:'UNCLEAR',bias:'NEUTRAL',confirmed:false,correction:false,score:Number(directionalScore.toFixed(1)),
+    pressure:Number(pressure.toFixed(4)),recentImpulse:Number(recentImpulse.toFixed(3)),candleQuality:Number(candleQuality.toFixed(3)),
+    reason:'Daily price action lacks sufficient directional pressure and follow-through'
   };
 }

@@ -66,7 +66,6 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const prior=dailySeries.filter(x=>day(x.time)<dayKey);
     const result=assessDailyPriceAction(prior);
     dailyPACache.set(dayKey,result);
-    dailyPAStates.set(dayKey,result);
     return result;
   };
   const lastTradeIndex=new Map<StrategyName,number>();
@@ -74,7 +73,6 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   let maxDD=0,maxDailyDD=0,maxDailyRiskUsed=0,maxDailyActualRisk=0;
   let deepAnalysisCount=0,fastGateSkipCount=0;
   let dailyTrendBlockedCandles=0,dailyTrendPrecheckCount=0;
-  const dailyPAStates=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
 
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
@@ -413,7 +411,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     validOpportunities:opportunities.filter(x=>x.status==='VALID'),
     opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
-    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount,dailyPAByDay:[...dailyPAStates.entries()].map(([day,state])=>({day,state:state.state,bias:state.bias,confirmed:state.confirmed,correction:state.correction,score:state.score,pressure:state.pressure,recentImpulse:state.recentImpulse,candleQuality:state.candleQuality,reason:state.reason}))} as any,
+    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount},
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }
