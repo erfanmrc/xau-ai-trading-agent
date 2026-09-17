@@ -1,6 +1,6 @@
 import { Candle, EconomicEvent, MarketBias, MarketContext } from '@/types/market';
 import { resample } from '@/engine/indicators';
-import { classifyMarketPhase, detectMotherMove, summarizeStructure } from '@/engine/market-structure';
+import { assessDailyPriceAction, classifyMarketPhase, detectMotherMove, summarizeStructure } from '@/engine/market-structure';
 import { buildImportantLevels } from '@/engine/levels';
 import { buildEconomicContext } from '@/engine/economic';
 
@@ -26,7 +26,8 @@ export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:
   const dailys=daily.length>=5?summarizeStructure(daily,60):summarizeStructure([]);
   const weeklys=weekly.length>=3?summarizeStructure(weekly,24):summarizeStructure([]);
   const h1b=h1s.bias,m15b=m15s.bias,m5b=m5s.bias,m1b=m1s.bias;
-  const dailyb=dailys.bias;
+  const dailyPA=assessDailyPriceAction(daily);
+  const dailyb=dailyPA.bias;
   const weeklyb=weeklys.bias;
   const vals=[h1b,m15b,m5b,m1b];
   const long=vals.filter(x=>x==='LONG').length,short=vals.filter(x=>x==='SHORT').length;
@@ -41,7 +42,7 @@ export function buildContext(m1:Candle[],dailyCandles?:Candle[],economicEvents?:
     .filter(x=>currentTime-new Date(x.endTime).getTime()<=90*60_000)
     .sort((a,b)=>b.strength-a.strength || new Date(b.endTime).getTime()-new Date(a.endTime).getTime())[0]??null;
   return {
-    bias,h1:h1b,m15:m15b,m5:m5b,m1:m1b,dailyBias:dailyb,weeklyBias:weeklyb,
+    bias,h1:h1b,m15:m15b,m5:m5b,m1:m1b,dailyBias:dailyb,weeklyBias:weeklyb,dailyPriceAction:dailyPA,
     structure:{m1:m1s,m5:m5s,m15:m15s,h1:h1s,daily:dailys,weekly:weeklys},
     phase:classifyMarketPhase(sorted),motherMove,alignmentScore,aligned,
     session:sessionName(sorted.at(-1)!.time),

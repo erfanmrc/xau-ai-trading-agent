@@ -32,3 +32,11 @@ The backtest GET route uses an adaptive M1 fetch: requested candles first, then 
 - M1/M5/M15/H1 swing highs and lows are exposed as important levels and are used for structural stops/confluence.
 - Existing positions exit at their planned TP or SL; market trend analysis controls the direction of future entries, not TP exits.
 - Micro-MAP requires a projected reward above 4R.
+
+## Batch 29 Daily Price-Action Direction
+The Daily trading-direction filter is based on price action rather than Daily H/L labels.
+It evaluates directional pressure, close progression, recent impulse/follow-through,
+candle quality and controlled correction behavior using completed daily candles only.
+Daily H/L remains important for structural levels and execution logic on lower timeframes.
+A confirmed Daily price-action trend permits new scalp entries only when the market is not in a
+controlled correction; ambiguous/range conditions remain blocked.

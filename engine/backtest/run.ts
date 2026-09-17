@@ -5,7 +5,7 @@ import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { buildRisk } from '@/engine/risk';
 import { fastGate } from '@/engine/backtest/fast-gate';
 import { atr, bodyRatio, candleDirection, closeLocation, resample } from '@/engine/indicators';
-import { summarizeStructure } from '@/engine/market-structure';
+import { assessDailyPriceAction, summarizeStructure } from '@/engine/market-structure';
 
 const DEFAULTS:BacktestConfig={
   balance:C.balance,
@@ -59,13 +59,13 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   const rejectionCounts=new Map<string,number>();
   const stats=new Map<StrategyName,BacktestStrategyStats>([['SP2L',emptyStats('SP2L')],['PRO_BTB',emptyStats('PRO_BTB')],['MICROMAP',emptyStats('MICROMAP')]]);
   const dailySeries=(input.dailyCandles??[]).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
-  const dailyStructureCache=new Map<string,ReturnType<typeof summarizeStructure>>();
-  const getDailyStructureForDay=(dayKey:string)=>{
-    const cached=dailyStructureCache.get(dayKey);
+  const dailyPACache=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
+  const getDailyPriceActionForDay=(dayKey:string)=>{
+    const cached=dailyPACache.get(dayKey);
     if(cached) return cached;
     const prior=dailySeries.filter(x=>day(x.time)<dayKey);
-    const result=prior.length>=5?summarizeStructure(prior,60):summarizeStructure([]);
-    dailyStructureCache.set(dayKey,result);
+    const result=assessDailyPriceAction(prior);
+    dailyPACache.set(dayKey,result);
     return result;
   };
   const lastTradeIndex=new Map<StrategyName,number>();
@@ -220,15 +220,13 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     // take-profit-count limit; the remaining daily safety control is risk.
     if((cfg.maxTradesPerDay>0 && todayTrades>=cfg.maxTradesPerDay) || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
-    // Daily H/L trend is a hard day-level gate. When the completed daily
-    // structure is RANGE/UNCLEAR, the user rule is to avoid scalp entries
-    // during ambiguity/correction. Skip expensive strategy analysis entirely.
+    // Daily direction is decided by price action, not by Daily swing labels.
+    // The Daily H/L structure remains available for execution/levels only.
     dailyTrendPrecheckCount++;
-    const dailyStructure=getDailyStructureForDay(currentDay);
-    if(C.analysis.spike.requireDailyTrend && (!dailyStructure.trendConfirmed || dailyStructure.bias==='NEUTRAL')){
+    const dailyPA=getDailyPriceActionForDay(currentDay);
+    if(C.analysis.spike.requireDailyTrend && (!dailyPA.confirmed || dailyPA.bias==='NEUTRAL' || dailyPA.correction)){
       dailyTrendBlockedCandles++;
-      const suffix=dailyStructure.correction?' / CORRECTION':'';
-      addRejection(`Daily H/L trend is ${dailyStructure.state}${suffix}; trend not confirmed for new scalp entries`);
+      addRejection(`Daily price action is ${dailyPA.state}; no new scalp entry in ambiguity/correction`);
       continue;
     }
 
@@ -243,7 +241,8 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       fastGateSkipCount++;
       signal={
         symbol:'XAUUSD',timestamp:c.time,
-        context: { bias:'NEUTRAL',h1:'NEUTRAL',m15:'NEUTRAL',m5:'NEUTRAL',m1:'NEUTRAL',dailyBias:'NEUTRAL',weeklyBias:'NEUTRAL',phase:'TRANSITION',motherMove:null,alignmentScore:0,aligned:false,session:undefined,importantLevels:{round5:Math.round(c.close/5)*5,round10:Math.round(c.close/10)*10,previousDayHigh:null,previousDayLow:null,previousDayMid:null,sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null},liquidity:{previousDayHigh:null,previousDayLow:null,sessionHigh:null,sessionLow:null,rangeHigh:null,rangeLow:null},economic:{status:'UNAVAILABLE',risk:'NONE',bias:'NEUTRAL',upcoming:[],notes:['Fast gate skipped deep analysis']}
+        context: { bias:'NEUTRAL',h1:'NEUTRAL',m15:'NEUTRAL',m5:'NEUTRAL',m1:'NEUTRAL',dailyBias:'NEUTRAL',weeklyBias:'NEUTRAL',phase:'TRANSITION',motherMove:null,alignmentScore:0,aligned:false,session:undefined,importantLevels:{round5:Math.round(c.close/5)*5,round10:Math.round(c.close/10)*10,previousDayHigh:null,previousDayLow:null,previousDayMid:null,sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null},liquidity:{previousDayHigh:null,previousDayLow:null,sessionHigh:null,sessionLow:null,rangeHigh:null,rangeLow:null},dailyPriceAction:{state:'UNCLEAR',bias:'NEUTRAL',confirmed:false,correction:false,score:0,pressure:0,recentImpulse:0,candleQuality:0,reason:'Fast gate skipped deep analysis'},
+          economic:{status:'UNAVAILABLE',risk:'NONE',bias:'NEUTRAL',upcoming:[],notes:['Fast gate skipped deep analysis']}
         },
         signals:[
           {strategy:'SP2L',status:'INVALID',score:0,reason:'Fast gate: candle cannot trigger a valid SP2L entry',reasons:['No valid entry-trigger geometry on current candle'],warnings:['Deep analysis skipped for performance'],direction:null},
@@ -263,7 +262,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       if(s.status==='VALID' && candidate){
         if(chosen?.strategy===s.strategy) action='EXECUTE';
         else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 filter blocks the strategy direction';}
-        else if(candidate.dailyRelation!=='CONFIRM'){action='REJECT';rejectionReason=`Daily H/L trend does not confirm ${candidate.direction}: ${signal.context.structure.daily.state}`;}
+        else if(candidate.dailyRelation!=='CONFIRM'){action='REJECT';rejectionReason=`Daily price action does not confirm ${candidate.direction}: ${signal.context.dailyPriceAction.state}`;}
         else if(signal.context.phase==='RANGE'){action='REJECT';rejectionReason='Market phase is RANGE; no entry in range interior';}
         else if(!chosen){action='REJECT';rejectionReason='No eligible strategy selected after hard filters';}
         else {action='REJECT';rejectionReason=`Another eligible candidate selected: ${chosen.strategy}`;}
@@ -275,7 +274,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         confluenceScore:candidate?.confluenceScore??s.confluence?.score??0,confluenceLabels:candidate?.confluenceLabels??s.confluence?.labels??[],
         dailyTrendHighLabel:signal.context.structure?.daily?.highLabel??null,
         dailyTrendLowLabel:signal.context.structure?.daily?.lowLabel??null,
-        dailyTrendState:signal.context.structure?.daily?.state??'UNCLEAR'
+        dailyTrendState:signal.context.dailyPriceAction?.state??'UNCLEAR'
       });
     }
 
@@ -332,7 +331,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       x2Activated:false,x2ActivationTime:null,favorableMove:0,mfeR:0,setupScore:chosen.score,x2TriggeredAtR:null,
       targetLegSize:plan.leg1,targetDistance:plan.targetDistance,plannedRR:plan.rr,targetReached:false,
       marketPhase:signal.context.phase,dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias,
-      dailyTrendState:signal.context.structure.daily.state
+      dailyTrendState:signal.context.dailyPriceAction.state
     };
     dailyRiskUsed.set(currentDay,nowUsed+initialRisk);
     dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+initialRisk);

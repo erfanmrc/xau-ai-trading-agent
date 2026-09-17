@@ -39,7 +39,7 @@ export type BacktestOpportunity={
   confluenceLabels:string[];
   dailyTrendHighLabel?:'HH'|'LH'|null;
   dailyTrendLowLabel?:'HL'|'LL'|null;
-  dailyTrendState?:'UPTREND'|'DOWNTREND'|'RANGE'|'UNCLEAR';
+  dailyTrendState?:'UPTREND'|'DOWNTREND'|'CORRECTION'|'RANGE'|'UNCLEAR';
 };
 
 export type BacktestStrategyStats={

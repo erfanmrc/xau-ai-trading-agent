@@ -137,6 +137,18 @@ export type ImportantLevels = {
   m1SwingLow:number|null;
 };
 
+export type DailyPriceAction = {
+  state: 'UPTREND' | 'DOWNTREND' | 'CORRECTION' | 'RANGE' | 'UNCLEAR';
+  bias: MarketBias;
+  confirmed: boolean;
+  correction: boolean;
+  score: number;
+  pressure: number;
+  recentImpulse: number;
+  candleQuality: number;
+  reason: string;
+};
+
 export type MarketContext = {
   bias: MarketBias;
   h1: MarketBias;
@@ -145,6 +157,7 @@ export type MarketContext = {
   m1: MarketBias;
   dailyBias: MarketBias;
   weeklyBias: MarketBias;
+  dailyPriceAction: DailyPriceAction;
   phase: MarketPhase;
   motherMove: MotherMove | null;
   alignmentScore: number;

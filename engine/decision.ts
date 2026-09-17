@@ -57,15 +57,15 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
       entry:s.entry!,stop:s.stop!,signalTime:c.at(-1)!.time,h1Filter:e.h1Filter,m15Relation:e.m15Relation,
       dailyRelation:e.dailyRelation,weeklyRelation:e.weeklyRelation,phaseRelation:e.phaseRelation,
       confluenceScore:conf?.score??0,confluenceLabels:conf?.labels??[],
-      reasons:[s.reason,`H1 filter: ${e.h1Filter}`,`M15: ${e.m15Relation}`,`Daily: ${e.dailyRelation}`,`Weekly: ${e.weeklyRelation}`,`Market phase: ${context.phase} → ${e.phaseRelation}`,`M5 role: ${context.m5===s.direction?'aligned':context.m5==='NEUTRAL'?'neutral':'opposed'}`,`M1 role: ${context.m1===s.direction?'aligned':context.m1==='NEUTRAL'?'neutral':'opposed'}`,conf?.labels?.length?`Confluence +${conf.score}: ${conf.labels.join(', ')}`:'No important-level confluence']
+      reasons:[s.reason,`H1 filter: ${e.h1Filter}`,`M15: ${e.m15Relation}`,`Daily PA: ${e.dailyRelation}`,`Weekly: ${e.weeklyRelation}`,`Market phase: ${context.phase} → ${e.phaseRelation}`,`M5 role: ${context.m5===s.direction?'aligned':context.m5==='NEUTRAL'?'neutral':'opposed'}`,`M1 role: ${context.m1===s.direction?'aligned':context.m1==='NEUTRAL'?'neutral':'opposed'}`,conf?.labels?.length?`Confluence +${conf.score}: ${conf.labels.join(', ')}`:'No important-level confluence']
     };
   });
   const eligible=candidates.filter(x=>{
     if(x.h1Filter==='BLOCK') return false;
-    // Daily H/L trend is the day-level direction. Mixed/neutral Daily structure
-    // is uncertainty, so no scalp position is executed in that state.
+    // Daily direction is a price-action regime, not a Daily H/L label.
+    // H/L remains critical for execution levels and lower-timeframe structure.
     if(x.dailyRelation!=='CONFIRM') return false;
-    if(!context.structure.daily.trendConfirmed || context.structure.daily.correction) return false;
+    if(!context.dailyPriceAction.confirmed || context.dailyPriceAction.correction) return false;
     if(context.phase==='RANGE') return false;
     return true;
   });
@@ -85,7 +85,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     ?`One valid strategy is sufficient. ${selection.strategy} selected as ${selection.phaseRelation.toLowerCase()} in ${context.phase} phase; H1=${selection.h1Filter}, Daily=${selection.dailyRelation}, Weekly=${selection.weeklyRelation}.`
     :valid.length
       ? (context.dailyBias==='NEUTRAL'
-        ? `Valid setup exists but Daily H/L structure is ${context.structure.daily.state}; no scalp trade in ambiguity.`
+        ? `Valid setup exists but Daily price action is not entry-ready: ${context.dailyPriceAction.state}.`
         : context.phase==='RANGE'
           ? 'Valid setup exists but market phase is RANGE; no scalp trade.'
           : 'Valid setup exists but hard execution filters rejected it.')
@@ -94,7 +94,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     symbol:'XAUUSD',timestamp:c.at(-1)?.time??new Date().toISOString(),context,signals,candidates,
     selection:selection?{strategy:selection.strategy,direction:selection.direction,score:selection.score}:null,
     consensus:{direction,validCount:valid.length,alignedCount:eligible.length,eligibleCount:eligible.length,mode,reason},
-    message:['XAU AI Trading Agent',`Bias: ${context.bias}`,`Phase: ${context.phase}`,`H1 ${context.h1} filter | M15 ${context.m15} structure | M5 ${context.m5} setup | M1 ${context.m1} trigger`,`Daily: ${context.dailyBias} | Weekly: ${context.weeklyBias}`,`Daily H/L: ${context.structure.daily.highLabel??'—'} / ${context.structure.daily.lowLabel??'—'} | State: ${context.structure.daily.state} | Confirmed: ${context.structure.daily.trendConfirmed?'YES':'NO'}${context.structure.daily.correction?' | CORRECTION':''}`,`M15 H/L: ${context.structure.m15.highLabel??'—'} / ${context.structure.m15.lowLabel??'—'} | State: ${context.structure.m15.state}`,`Mother move: ${context.motherMove?`${context.motherMove.timeframe} ${context.motherMove.direction} strength=${context.motherMove.strength}`:'NONE'}`,`Session: ${context.session}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates: ${candidates.length}`,`Eligible candidates: ${eligible.length}`,`Selected: ${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus: ${mode}${direction?` ${direction}`:''}`,`Reason: ${reason}`,`Economic: ${context.economic.status} / ${context.economic.risk} / ${context.economic.bias}`].join('\n')
+    message:['XAU AI Trading Agent',`Bias: ${context.bias}`,`Phase: ${context.phase}`,`H1 ${context.h1} filter | M15 ${context.m15} structure | M5 ${context.m5} setup | M1 ${context.m1} trigger`,`Daily: ${context.dailyBias} | Weekly: ${context.weeklyBias}`,`Daily PA: ${context.dailyPriceAction.bias} | State: ${context.dailyPriceAction.state} | Confirmed: ${context.dailyPriceAction.confirmed?'YES':'NO'}${context.dailyPriceAction.correction?' | CORRECTION':''} | ${context.dailyPriceAction.reason}`,`M15 H/L: ${context.structure.m15.highLabel??'—'} / ${context.structure.m15.lowLabel??'—'} | State: ${context.structure.m15.state}`,`Mother move: ${context.motherMove?`${context.motherMove.timeframe} ${context.motherMove.direction} strength=${context.motherMove.strength}`:'NONE'}`,`Session: ${context.session}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates: ${candidates.length}`,`Eligible candidates: ${eligible.length}`,`Selected: ${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus: ${mode}${direction?` ${direction}`:''}`,`Reason: ${reason}`,`Economic: ${context.economic.status} / ${context.economic.risk} / ${context.economic.bias}`].join('\n')
   };
 }
 
