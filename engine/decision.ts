@@ -65,6 +65,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     // Daily H/L trend is the day-level direction. Mixed/neutral Daily structure
     // is uncertainty, so no scalp position is executed in that state.
     if(x.dailyRelation!=='CONFIRM') return false;
+    if(!context.structure.daily.trendConfirmed || context.structure.daily.correction) return false;
     if(context.phase==='RANGE') return false;
     return true;
   });
@@ -93,7 +94,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     symbol:'XAUUSD',timestamp:c.at(-1)?.time??new Date().toISOString(),context,signals,candidates,
     selection:selection?{strategy:selection.strategy,direction:selection.direction,score:selection.score}:null,
     consensus:{direction,validCount:valid.length,alignedCount:eligible.length,eligibleCount:eligible.length,mode,reason},
-    message:['XAU AI Trading Agent',`Bias: ${context.bias}`,`Phase: ${context.phase}`,`H1 ${context.h1} filter | M15 ${context.m15} structure | M5 ${context.m5} setup | M1 ${context.m1} trigger`,`Daily: ${context.dailyBias} | Weekly: ${context.weeklyBias}`,`Daily H/L: ${context.structure.daily.highLabel??'—'} / ${context.structure.daily.lowLabel??'—'} | State: ${context.structure.daily.state}`,`M15 H/L: ${context.structure.m15.highLabel??'—'} / ${context.structure.m15.lowLabel??'—'} | State: ${context.structure.m15.state}`,`Mother move: ${context.motherMove?`${context.motherMove.timeframe} ${context.motherMove.direction} strength=${context.motherMove.strength}`:'NONE'}`,`Session: ${context.session}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates: ${candidates.length}`,`Eligible candidates: ${eligible.length}`,`Selected: ${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus: ${mode}${direction?` ${direction}`:''}`,`Reason: ${reason}`,`Economic: ${context.economic.status} / ${context.economic.risk} / ${context.economic.bias}`].join('\n')
+    message:['XAU AI Trading Agent',`Bias: ${context.bias}`,`Phase: ${context.phase}`,`H1 ${context.h1} filter | M15 ${context.m15} structure | M5 ${context.m5} setup | M1 ${context.m1} trigger`,`Daily: ${context.dailyBias} | Weekly: ${context.weeklyBias}`,`Daily H/L: ${context.structure.daily.highLabel??'—'} / ${context.structure.daily.lowLabel??'—'} | State: ${context.structure.daily.state} | Confirmed: ${context.structure.daily.trendConfirmed?'YES':'NO'}${context.structure.daily.correction?' | CORRECTION':''}`,`M15 H/L: ${context.structure.m15.highLabel??'—'} / ${context.structure.m15.lowLabel??'—'} | State: ${context.structure.m15.state}`,`Mother move: ${context.motherMove?`${context.motherMove.timeframe} ${context.motherMove.direction} strength=${context.motherMove.strength}`:'NONE'}`,`Session: ${context.session}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates: ${candidates.length}`,`Eligible candidates: ${eligible.length}`,`Selected: ${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus: ${mode}${direction?` ${direction}`:''}`,`Reason: ${reason}`,`Economic: ${context.economic.status} / ${context.economic.risk} / ${context.economic.bias}`].join('\n')
   };
 }
 

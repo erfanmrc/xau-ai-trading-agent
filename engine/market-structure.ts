@@ -14,7 +14,7 @@ function swingLow(c:Candle[], i:number, strength=2){
 
 export function summarizeStructure(c:Candle[],lookback?:number):StructureSummary{
   if(!c.length) return {
-    state:'UNCLEAR',bias:'NEUTRAL',lastClose:null,lastSwingHigh:null,lastSwingLow:null,
+    state:'UNCLEAR',bias:'NEUTRAL',trendConfirmed:false,correction:false,lastClose:null,lastSwingHigh:null,lastSwingLow:null,
     previousSwingHigh:null,previousSwingLow:null,highLabel:null,lowLabel:null,
     protectedHigh:null,protectedLow:null,reversalToLong:false,reversalToShort:false,breakout:null
   };
@@ -33,24 +33,46 @@ export function summarizeStructure(c:Candle[],lookback?:number):StructureSummary
   if(lastHigh!==null&&close>lastHigh) breakout='LONG';
   if(lastLow!==null&&close<lastLow) breakout='SHORT';
 
-  // A trend is declared only when BOTH sides of structure agree. This keeps
-  // corrections/unclear structure out: HH+HL = uptrend, LH+LL = downtrend.
-  let state:StructureSummary['state']='UNCLEAR';
-  if(highLabel==='HH'&&lowLabel==='HL') state='UPTREND';
-  else if(highLabel==='LH'&&lowLabel==='LL') state='DOWNTREND';
-  else if((highLabel&&lowLabel) || (highs.length>=2&&lows.length>=2)) state='RANGE';
+  // The latest HH/HL or LH/LL pair is the strict current structure.
+  const strictUp=highLabel==='HH'&&lowLabel==='HL';
+  const strictDown=highLabel==='LH'&&lowLabel==='LL';
 
-  // During a downtrend, a new HL instead of another LL is a structural
-  // reversal warning. During an uptrend, a new LH instead of another HH is
-  // the symmetric warning. Final reversal still requires candle stabilization
-  // in the execution layer; these flags only describe the H/L structure.
-  const reversalToLong=lowLabel==='HL' && highLabel!=='HH';
-  const reversalToShort=highLabel==='LH' && lowLabel!=='LL';
+  // Do not collapse every mixed pair (e.g. LH + HL) into RANGE. First establish
+  // the dominant structural regime from several recent confirmed swings. A mixed
+  // latest pair then becomes a CORRECTION of that regime, not a brand-new range.
+  const recentHighLabels:string[]=[];
+  for(let i=Math.max(1,highs.length-5);i<highs.length;i++){
+    const a=highs[i-1]?.price,b=highs[i]?.price;
+    if(a!=null&&b!=null) recentHighLabels.push(b>a?'HH':'LH');
+  }
+  const recentLowLabels:string[]=[];
+  for(let i=Math.max(1,lows.length-5);i<lows.length;i++){
+    const a=lows[i-1]?.price,b=lows[i]?.price;
+    if(a!=null&&b!=null) recentLowLabels.push(b>a?'HL':'LL');
+  }
+  const upScore=recentHighLabels.filter(x=>x==='HH').length+recentLowLabels.filter(x=>x==='HL').length;
+  const downScore=recentHighLabels.filter(x=>x==='LH').length+recentLowLabels.filter(x=>x==='LL').length;
+  const enoughHistory=recentHighLabels.length>=2&&recentLowLabels.length>=2;
+
+  let regime:StructureSummary['state']='UNCLEAR';
+  if(strictUp) regime='UPTREND';
+  else if(strictDown) regime='DOWNTREND';
+  else if(enoughHistory && upScore>=3 && upScore>downScore) regime='UPTREND';
+  else if(enoughHistory && downScore>=3 && downScore>upScore) regime='DOWNTREND';
+  else if(enoughHistory && Math.max(upScore,downScore)>=2) regime=upScore===downScore?'RANGE':'RANGE';
+
+  const correction = regime==='UPTREND' ? !strictUp : regime==='DOWNTREND' ? !strictDown : false;
+  // Only a strict, non-corrective structure is a tradable daily trend.
+  const trendConfirmed = (regime==='UPTREND' || regime==='DOWNTREND') && !correction;
+  const state=regime;
+  const bias:MarketBias=trendConfirmed?(state==='UPTREND'?'LONG':'SHORT'):'NEUTRAL';
+
+  const reversalToLong=(lowLabel==='HL' && highLabel!=='HH');
+  const reversalToShort=(highLabel==='LH' && lowLabel!=='LL');
   const protectedLow=state==='UPTREND'?lastLow:null;
   const protectedHigh=state==='DOWNTREND'?lastHigh:null;
-  const bias:MarketBias=state==='UPTREND'?'LONG':state==='DOWNTREND'?'SHORT':'NEUTRAL';
   return {
-    state,bias,lastClose:close,lastSwingHigh:lastHigh,lastSwingLow:lastLow,
+    state,bias,trendConfirmed,correction,lastClose:close,lastSwingHigh:lastHigh,lastSwingLow:lastLow,
     previousSwingHigh:prevHigh,previousSwingLow:prevLow,highLabel,lowLabel,
     protectedHigh,protectedLow,reversalToLong,reversalToShort,breakout
   };

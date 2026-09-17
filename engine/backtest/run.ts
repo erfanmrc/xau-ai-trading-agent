@@ -225,9 +225,10 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     // during ambiguity/correction. Skip expensive strategy analysis entirely.
     dailyTrendPrecheckCount++;
     const dailyStructure=getDailyStructureForDay(currentDay);
-    if(C.analysis.spike.requireDailyTrend && dailyStructure.bias==='NEUTRAL'){
+    if(C.analysis.spike.requireDailyTrend && (!dailyStructure.trendConfirmed || dailyStructure.bias==='NEUTRAL')){
       dailyTrendBlockedCandles++;
-      addRejection(`Daily H/L trend is ${dailyStructure.state}; no scalp trades in ambiguity`);
+      const suffix=dailyStructure.correction?' / CORRECTION':'';
+      addRejection(`Daily H/L trend is ${dailyStructure.state}${suffix}; trend not confirmed for new scalp entries`);
       continue;
     }
 

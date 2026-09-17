@@ -51,6 +51,8 @@ export type EconomicContext = {
 export type StructureSummary = {
   state: 'UPTREND' | 'DOWNTREND' | 'RANGE' | 'UNCLEAR';
   bias: MarketBias;
+  trendConfirmed: boolean;
+  correction: boolean;
   lastClose: number | null;
   lastSwingHigh: number | null;
   lastSwingLow: number | null;
