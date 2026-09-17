@@ -141,6 +141,7 @@ export type DailyPriceAction = {
   state: 'UPTREND' | 'DOWNTREND' | 'CORRECTION' | 'RANGE' | 'UNCLEAR';
   bias: MarketBias;
   confirmed: boolean;
+  entryReady: boolean;
   correction: boolean;
   score: number;
   pressure: number;

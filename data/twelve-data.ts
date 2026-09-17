@@ -190,8 +190,8 @@ async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCan
   const chunkErrors:NonNullable<AdaptiveCandleResult["chunkErrors"]>=[];
   let attempts=0;
   const RANGE_DAYS=3;
-  const MAX_LOOKBACK_DAYS=18;
-  const INTER_CHUNK_DELAY_MS=500;
+  const MAX_LOOKBACK_DAYS=30;
+  const INTER_CHUNK_DELAY_MS=1000;
 
   // A 3-calendar-day range stays below the 5,000-record maximum for XAU/USD
   // while keeping request count low enough to avoid plan-level 429 throttling.

@@ -157,9 +157,9 @@ export function classifyMarketPhase(c:Candle[]):MarketPhase{
   return 'TRANSITION';
 }
 
-export function assessDailyPriceAction(c:Candle[]): import('@/types/market').DailyPriceAction {
+function assessDailyPriceActionSnapshot(c:Candle[]): import('@/types/market').DailyPriceAction {
   const empty = (state:'UNCLEAR'|'RANGE'='UNCLEAR'): import('@/types/market').DailyPriceAction => ({
-    state,bias:'NEUTRAL',confirmed:false,correction:false,score:0,pressure:0,recentImpulse:0,candleQuality:0,
+    state,bias:'NEUTRAL',confirmed:false,entryReady:false,correction:false,score:0,pressure:0,recentImpulse:0,candleQuality:0,
     reason:state==='RANGE'?'Daily price action is balanced/ranging':'Insufficient completed daily price-action history'
   });
 
@@ -274,7 +274,7 @@ export function assessDailyPriceAction(c:Candle[]): import('@/types/market').Dai
     const balanced=Math.abs(recentPressure)<0.045 && Math.abs(slope6)<0.20 && Math.abs(recentNet)<0.45 && Math.abs(scoreGap)<7;
     const state=balanced?'RANGE':'UNCLEAR';
     return {
-      state,bias:'NEUTRAL',confirmed:false,correction:false,
+      state,bias:'NEUTRAL',confirmed:false,entryReady:false,correction:false,
       score:Number(dominantScore.toFixed(1)),
       pressure:Number(recentPressure.toFixed(4)),
       recentImpulse:Number((recentPressure*med).toFixed(3)),
@@ -303,7 +303,7 @@ export function assessDailyPriceAction(c:Candle[]): import('@/types/market').Dai
   if(oppositePressure && oppositeSlope && oppositeProgress && oppositeConsistency && Math.abs(priorPressure)>=0.035){
     const newBias=dominant==='LONG'?'SHORT':'LONG' as 'LONG'|'SHORT';
     return {
-      state:newBias==='LONG'?'UPTREND':'DOWNTREND',bias:newBias,confirmed:true,correction:false,
+      state:newBias==='LONG'?'UPTREND':'DOWNTREND',bias:newBias,confirmed:true,entryReady:true,correction:false,
       score:Number(Math.max(opposingScore,dominantScore).toFixed(1)),
       pressure:Number(recentPressure.toFixed(4)),
       recentImpulse:Number((recentPressure*med).toFixed(3)),
@@ -314,7 +314,7 @@ export function assessDailyPriceAction(c:Candle[]): import('@/types/market').Dai
 
   if(persistentCorrection){
     return {
-      state:'CORRECTION',bias:dominant,confirmed:true,correction:true,
+      state:'CORRECTION',bias:dominant,confirmed:true,entryReady:false,correction:true,
       score:Number(dominantScore.toFixed(1)),
       pressure:Number(recentPressure.toFixed(4)),
       recentImpulse:Number((recentPressure*med).toFixed(3)),
@@ -324,11 +324,61 @@ export function assessDailyPriceAction(c:Candle[]): import('@/types/market').Dai
   }
 
   return {
-    state:dominant==='LONG'?'UPTREND':'DOWNTREND',bias:dominant,confirmed:true,correction:false,
+    state:dominant==='LONG'?'UPTREND':'DOWNTREND',bias:dominant,confirmed:true,entryReady:true,correction:false,
     score:Number(dominantScore.toFixed(1)),
     pressure:Number(recentPressure.toFixed(4)),
     recentImpulse:Number((recentPressure*med).toFixed(3)),
     candleQuality:Number(candleQuality.toFixed(3)),
     reason:`Daily ${dominant} trend confirmed by directional pressure, close progression, displacement and candle behaviour`
   };
+}
+
+
+// Stateful Daily Price-Action regime:
+// - A confirmed trend persists until a genuinely confirmed opposite regime appears.
+// - RANGE/UNCLEAR days keep the underlying trend but are NOT entry-ready.
+// - CORRECTION keeps the underlying trend but explicitly blocks new entries.
+// - H/L labels are not used to determine the Daily bias; they remain execution structure elsewhere.
+export function assessDailyPriceAction(c:Candle[]): import('@/types/market').DailyPriceAction {
+  const src=(c??[]).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
+  const clean=src.filter(x=>Number.isFinite(x.open)&&Number.isFinite(x.high)&&Number.isFinite(x.low)&&Number.isFinite(x.close)&&x.high>x.low);
+  if(clean.length<10) return assessDailyPriceActionSnapshot(clean);
+
+  let regimeBias: 'LONG'|'SHORT'|'NEUTRAL' = 'NEUTRAL';
+  let last: import('@/types/market').DailyPriceAction = assessDailyPriceActionSnapshot(clean.slice(0,10));
+
+  for(let end=10; end<=clean.length; end++){
+    const raw=assessDailyPriceActionSnapshot(clean.slice(0,end));
+
+    if(raw.confirmed && (raw.bias==='LONG' || raw.bias==='SHORT')){
+      if(raw.state==='UPTREND' || raw.state==='DOWNTREND'){
+        const newBias=raw.bias as 'LONG'|'SHORT';
+        // The snapshot only emits an opposite trend after sustained opposing pressure,
+        // so when it changes bias we accept it as the confirmed new regime.
+        regimeBias=newBias;
+        last={...raw, entryReady:true};
+      } else if(raw.state==='CORRECTION'){
+        if(regimeBias==='NEUTRAL') regimeBias=raw.bias as 'LONG'|'SHORT';
+        last={...raw, bias:regimeBias, confirmed:true, entryReady:false, correction:true,
+          reason:`Underlying Daily ${regimeBias} regime persists, but price action is in correction; no new scalp entry`};
+      } else {
+        last={...raw, entryReady:false};
+      }
+    } else if(regimeBias!=='NEUTRAL'){
+      // Preserve the last confirmed trend through noisy/unclear days, while blocking entries.
+      last={
+        ...raw,
+        state: regimeBias==='LONG' ? 'UPTREND' : 'DOWNTREND',
+        bias: regimeBias,
+        confirmed:true,
+        entryReady:false,
+        correction:false,
+        reason:`Underlying Daily ${regimeBias} trend persists, but current price action is ${raw.state}; no new scalp entry`
+      };
+    } else {
+      last={...raw, entryReady:false};
+    }
+  }
+
+  return last;
 }

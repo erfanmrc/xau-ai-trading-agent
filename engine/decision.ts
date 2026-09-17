@@ -65,7 +65,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     // Daily direction is a price-action regime, not a Daily H/L label.
     // H/L remains critical for execution levels and lower-timeframe structure.
     if(x.dailyRelation!=='CONFIRM') return false;
-    if(!context.dailyPriceAction.confirmed || context.dailyPriceAction.correction) return false;
+    if(!context.dailyPriceAction.confirmed || !context.dailyPriceAction.entryReady || context.dailyPriceAction.correction) return false;
     if(context.phase==='RANGE') return false;
     return true;
   });

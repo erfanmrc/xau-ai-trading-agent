@@ -40,3 +40,11 @@ candle quality and controlled correction behavior using completed daily candles 
 Daily H/L remains important for structural levels and execution logic on lower timeframes.
 A confirmed Daily price-action trend permits new scalp entries only when the market is not in a
 controlled correction; ambiguous/range conditions remain blocked.
+
+### Batch 36 — stateful Daily Price Action
+- Daily bias is derived from price-action behaviour, not Daily H/L labels.
+- A confirmed daily trend persists until a genuinely confirmed opposite regime appears.
+- RANGE/UNCLEAR days preserve the underlying trend for context but set `entryReady=false`, so no new scalp is opened during ambiguity.
+- CORRECTION preserves the underlying trend but also blocks new entries.
+- H/HH/L/HL/LH/LL remain the execution structure used for breakouts, important levels, stops and targets.
+- Historical M1 date-range lookback is extended to 30 calendar days to better reach a 20,000-candle request when the provider has enough data.
