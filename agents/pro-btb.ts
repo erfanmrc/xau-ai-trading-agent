@@ -24,10 +24,12 @@ function strengthConfirmation(c:Candle[], z:StrategyZone, direction:'LONG'|'SHOR
     ? current.close>=z.high+a*C.analysis.btb.rejectionCloseATR
     : current.close<=z.low-a*C.analysis.btb.rejectionCloseATR;
   const prevAgainst=direction==='LONG'?prev.close<=prev.open:prev.close>=prev.open;
-  const twoStep = C.analysis.btb.requireTwoStepM1Rejection && z.timeframe==='M1'
+  const twoStep = z.timeframe!=='M1'
     ? (prevTouch && prevAgainst && dirOk && closeBeyond)
     : (currentTouch && dirOk && closeBeyond);
-  return {ok:twoStep&&bodyOk&&closeOk,dirOk,bodyOk,closeOk,touch:currentTouch||prevTouch,closeBeyond,prevAgainst,twoStep};
+  const strongBody=bodyRatio(current)>=C.analysis.btb.minM1RejectionBodyToRange;
+  const strongClose=direction==='LONG'?closeLocation(current)>=C.analysis.btb.minM1RejectionCloseInDirection:closeLocation(current)<=1-C.analysis.btb.minM1RejectionCloseInDirection;
+  return {ok:twoStep&&bodyOk&&closeOk&&strongBody&&strongClose,dirOk,bodyOk,closeOk,touch:currentTouch||prevTouch,closeBeyond,prevAgainst,twoStep};
 }
 
 
@@ -39,9 +41,8 @@ function directionalZoneDistance(entry:number,z:StrategyZone,direction:'LONG'|'S
 export function detectProBTB(c:Candle[], balance=C.balance, spread=0):StrategySignal {
   if(c.length<C.analysis.minCandles) return {strategy:'PRO_BTB',status:'INVALID',score:0,reason:'Insufficient candles for BTB',reasons:['Insufficient candles for BTB'],warnings:[],direction:null};
   const current=c.at(-1)!, s=summarizeStructure(c), a=Math.max(atr(resample(c,5),14),0.25);
-  const zones=[...buildMultiTimeframeBTBZones(c),...buildStrategyZones(c)].sort((x,y)=>sourceRank(y.source)-sourceRank(x.source)||y.endIndex-x.endIndex);
+  const zones=[...buildMultiTimeframeBTBZones(c)].sort((x,y)=>sourceRank(y.source)-sourceRank(x.source)||y.endIndex-x.endIndex);
   const recent=zones.filter(z=>{
-    if(z.timeframe==='M1') return c.length-1-z.endIndex<=C.analysis.btb.maxZoneAgeBars;
     const tf=resample(c,z.timeframe==='M15'?15:5);
     return tf.length-1-z.endIndex<=C.analysis.btb.maxZoneAgeBars;
   });

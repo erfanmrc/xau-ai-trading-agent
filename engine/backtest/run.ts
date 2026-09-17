@@ -29,7 +29,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   let balance=cfg.balance, peak=balance, dayStart=balance, currentDay='';
 
   type OpenPosition={
-    strategy:StrategyName;direction:Direction;signalTime:string;entryTime:string;entry:number;entry2:number|null;lot:number;lot2:number;stop:number;tp:number;
+    strategy:StrategyName;direction:Direction;signalTime:string;entryTime:string;entryBar:number;entry:number;entry2:number|null;lot:number;lot2:number;stop:number;tp:number;
     plannedRiskPercent:number;initialRiskPercent:number;x2RiskPercent:number;x2Activated:boolean;x2ActivationTime:string|null;favorableMove:number;
   };
   let open:OpenPosition|null=null;
@@ -111,8 +111,9 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       const priceFavorable=long?Math.max(0,c.high-open.entry):Math.max(0,open.entry-c.low);
       open.favorableMove=Math.max(open.favorableMove,priceFavorable);
       const firstStopDistance=pipsRisk(open.entry,open.stop,open.direction);
-      const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*0.10);
-      if(!open.x2Activated && open.entry2!==null && open.lot2>0 && open.favorableMove>=favorableThreshold){
+      const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*C.analysis.execution.minFavorableRForX2);
+      const x2CanActivate=i>open.entryBar && open.favorableMove>=favorableThreshold;
+      if(!open.x2Activated && open.entry2!==null && open.lot2>0 && x2CanActivate){
         const x2Hit=long?c.low<=open.entry2:c.high>=open.entry2;
         if(x2Hit){
           open.x2Activated=true;
@@ -204,7 +205,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const x2RiskPct=entry2!==null&&lot2>0?Math.max(0,combinedRisk-initialRisk):0;
     const entryTime=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].time:c.time;
     open={
-      strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
+      strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entryBar:(i+1<candles.length&&cfg.execution==='NEXT_OPEN'?i+1:i),entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
       plannedRiskPercent:Number(combinedRisk.toFixed(4)),initialRiskPercent:Number(initialRisk.toFixed(4)),x2RiskPercent:Number(x2RiskPct.toFixed(4)),
       x2Activated:false,x2ActivationTime:null,favorableMove:0
     };

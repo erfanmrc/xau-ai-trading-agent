@@ -54,8 +54,24 @@ export function detectSP2L(c:Candle[], balance=C.balance, spread=0):StrategySign
   const spikeHigh=Math.max(...spike.map(x=>x.high));
   const spikeLow=Math.min(...spike.map(x=>x.low));
   const breakoutLevel=dir==='LONG'?pre.high:pre.low;
+  const baselineRanges=c.slice(Math.max(1,start-20),start).map(x=>x.high-x.low);
+  const baselineMedian=baselineRanges.length?median(baselineRanges):a;
+  const spikeMedian=median(spike.map(x=>x.high-x.low));
+  const expansionOk=spikeMedian>=baselineMedian*C.analysis.spike.expansionVsMedian;
   const extension=Math.max(0,(dir==='LONG'?c[end].close-breakoutLevel:breakoutLevel-c[end].close))/a;
   const stopDistanceRaw=dir==='LONG'?c[end].close-spikeLow:spikeHigh-c[end].close;
+
+  // A valid SP2L spike must be meaningfully larger than the local baseline.
+  // This removes ordinary same-sized candles that merely look directional.
+  if(!expansionOk){
+    return {
+      strategy:'SP2L',status:'WATCH',score:40+(s.bias===dir?6:0),
+      reason:'Directional run found but spike expansion is insufficient',
+      reasons:[`${dir} spike breakout detected`,`Spike median range ${spikeMedian.toFixed(2)} vs baseline ${baselineMedian.toFixed(2)}`,'Wait for a genuinely expanding first leg'],
+      warnings:['SP2L requires real range expansion, not direction alone'],
+      direction:dir,trigger:breakoutLevel,zone:null
+    };
+  }
 
   // Do not chase a move whose entry has become too far from the breakout.
   if(extension>C.analysis.spike.maxExtensionATR || stopDistanceRaw>C.analysis.spike.maxStopATR*a){
@@ -91,16 +107,19 @@ export function detectSP2L(c:Candle[], balance=C.balance, spread=0):StrategySign
   }
 
   const pullbackDirection=candleDirection(pull);
+  const breakoutHold=dir==='LONG'
+    ? pull.low>=breakoutLevel-a*C.analysis.spike.maxReturnBeyondBreakoutATR
+    : pull.high<=breakoutLevel+a*C.analysis.spike.maxReturnBeyondBreakoutATR;
   const confirmation=candleDirection(current)===dir &&
-    bodyRatio(current)>=C.analysis.confirmation.minBodyToRange &&
-    (dir==='LONG'?closeLocation(current)>=C.analysis.confirmation.closeInDirection:closeLocation(current)<=1-C.analysis.confirmation.closeInDirection) &&
-    leg2Break &&
+    bodyRatio(current)>=C.analysis.spike.leg2MinBodyToRange &&
+    (dir==='LONG'?closeLocation(current)>=C.analysis.spike.leg2CloseInDirection:closeLocation(current)<=1-C.analysis.spike.leg2CloseInDirection) &&
+    leg2Break && breakoutHold &&
     (pullIsCounter || bodyRatio(pull)<=0.45);
   if(!confirmation){
     return {
       strategy:'SP2L',status:'WATCH',score:52+(pullbackDirection&&pullbackDirection!==dir?5:0)+(s.bias===dir?8:0),
       reason:'SP2L return detected; waiting for Leg-2 stabilization candle',
-      reasons:[`${dir} spike breakout detected`,'Single return candle is sufficient',`Return depth ${(returnDepth*100).toFixed(0)}% of spike range`,`Leg-2 candle must break the return-candle extreme`,`Leg-2 stabilization/continuation is not confirmed`],
+      reasons:[`${dir} spike breakout detected`,'Single return candle is sufficient',`Return depth ${(returnDepth*100).toFixed(0)}% of spike range`,`Breakout level held: ${breakoutHold?'yes':'no'}`,`Leg-2 candle must break the return-candle extreme`,`Leg-2 stabilization/continuation is not confirmed`],
       warnings:['Entry is intended at the start of Leg-2'],
       direction:dir,trigger:breakoutLevel,zone:null
     };
