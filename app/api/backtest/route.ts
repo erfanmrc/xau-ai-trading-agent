@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runBacktest } from '@/engine/backtest/run';
 import { getXauUsdCandles, getXauUsdCandlesAdaptive } from '@/data/twelve-data';
+import type { Candle } from '@/types/market';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,7 +69,7 @@ export async function GET(req:Request){
   }
   const dataFetchMs=Date.now()-fetchStarted;
 
-  let dailyCandles=[];
+  let dailyCandles:Candle[]=[];
   let dailyStatus:'skipped'|'fulfilled'|'rejected'='skipped';
   let dailyError:null|ReturnType<typeof errorDetails>=null;
   let dailyFetchMs=0;
