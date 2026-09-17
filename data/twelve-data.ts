@@ -5,7 +5,7 @@ const DEFAULT_TIMEOUT_MS=60000;
 const ADAPTIVE_TIMEOUTS_MS=[12000,10000,8000];
 const DAILY_CHUNK_TIMEOUT_MS=12000;
 const DAILY_CHUNK_DAYS_PER_BATCH=3;
-const MAX_DAYS_LOOKBACK=14;
+const MAX_DAYS_LOOKBACK=35;
 
 function apiKey(){
   const k=process.env.TWELVE_DATA_API_KEY;
@@ -121,7 +121,7 @@ function uniqueSortedCandles(candles:Candle[]):Candle[]{
 }
 
 async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCandleResult>{
-  const target=Math.max(1,Math.min(5000,Math.floor(requested)));
+  const target=Math.max(1,Math.min(20000,Math.floor(requested)));
   const all:Candle[]=[];
   const chunkErrors:NonNullable<AdaptiveCandleResult["chunkErrors"]>=[];
   let attempts=0;
@@ -171,7 +171,7 @@ async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCan
 }
 
 export async function getXauUsdCandlesAdaptive(interval="1min",outputsize=5000):Promise<AdaptiveCandleResult>{
-  const requested=Math.max(1,Math.min(5000,Math.floor(outputsize)));
+  const requested=Math.max(1,Math.min(20000,Math.floor(outputsize)));
 
   // For minute-level backtests, fetching one giant 5000-row response is often
   // the slowest path on serverless infrastructure. Use small exact-date chunks

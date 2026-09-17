@@ -40,7 +40,7 @@ export async function POST(req:Request){
 export async function GET(req:Request){
   const started=Date.now();
   const url=new URL(req.url);
-  const requested=Math.max(1500,Math.min(5000,Number(url.searchParams.get('candles')||5000)));
+  const requested=Math.max(1500,Math.min(20000,Number(url.searchParams.get('candles')||5000)));
   const includeDaily=url.searchParams.get('includeDaily')!=='0';
 
   // The large M1 request is the only critical upstream dependency. Twelve Data
