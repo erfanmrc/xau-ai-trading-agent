@@ -48,14 +48,21 @@ function buildMotherZone(c:Candle[],minutes:5|15):StrategyZone[] {
   const tf=resample(c,minutes);
   const out:StrategyZone[]=[];
   if(tf.length<30) return out;
-  for(let i=4;i<tf.length-1;i++){
-    const window=tf.slice(0,i+2);
+  // BTB only needs zones that can still be active. Scanning the entire
+  // historical TF series here made every backtest candle increasingly
+  // expensive (O(n^2)). Keep a bounded recent tail instead.
+  const age=Math.max(C.analysis.btb.maxZoneAgeBars,C.analysis.btb.returnWindowBars)+12;
+  const firstIndex=Math.max(4,tf.length-age-6);
+  for(let i=firstIndex;i<tf.length-1;i++){
+    const window=tf.slice(Math.max(0,i-30),i+2);
     const mm=detectMotherMoveOnTimeframe(window,minutes===5?'M5':'M15',18);
-    if(!mm || mm.endIndex!==i) continue;
-    const pre=tf[mm.startIndex-1];
-    const first=tf[mm.startIndex];
+    if(!mm || mm.endIndex!==window.length-2) continue;
+    const localStart=mm.startIndex;
+    const localEnd=mm.endIndex;
+    const pre=window[localStart-1];
+    const first=window[localStart];
     if(!pre || !first) continue;
-    const a=Math.max(atr(tf.slice(0,mm.endIndex+1),14),0.1);
+    const a=Math.max(atr(window,14),0.1);
     const pad=Math.max(a*C.analysis.btb.zonePaddingATR,0.03);
     const bodyLow=Math.min(pre.open,pre.close), bodyHigh=Math.max(pre.open,pre.close);
     const breakout=mm.breakoutLevel;
@@ -64,13 +71,9 @@ function buildMotherZone(c:Candle[],minutes:5|15):StrategyZone[] {
     const width=high-low;
     if(width>a*0.55) continue;
     out.push({
-      direction:mm.direction,
-      low,
-      high,
-      source:minutes===5?'BTB_5M':'BTB_15M',
+      direction:mm.direction,low,high,source:minutes===5?'BTB_5M':'BTB_15M',
       strength:Math.min(100,mm.strength+(minutes===15?4:0)),
-      startIndex:mm.startIndex-1,
-      endIndex:mm.endIndex,
+      startIndex:i-(localEnd-localStart+1)-1,endIndex:i,
       timeframe:minutes===5?'M5':'M15'
     });
   }

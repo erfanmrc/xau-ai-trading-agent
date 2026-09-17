@@ -15,7 +15,7 @@ const DEFAULTS:BacktestConfig={
   allowX2:true,
   cooldownBars:C.analysis.execution.minCooldownBars,
   cooldownAfterLossBars:C.analysis.execution.minCooldownAfterLossBars,
-  analysisWindowBars:1440,
+  analysisWindowBars:360,
 };
 
 const day=(t:string)=>new Date(t).toISOString().slice(0,10);

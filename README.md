@@ -59,3 +59,6 @@ The backtest reports strategy-specific opportunity statistics, rejections, daily
 
 
 Batch 13 performance patch: backtest uses a rolling 1440-M1 analysis window by default (configurable as analysisWindowBars) and the backtest API declares a Node.js runtime with maxDuration=60s where supported by the deployment plan. This preserves 5000-candle coverage while avoiding O(n²)-style repeated full-history analysis.
+
+
+Batch 14: performance patch. 5000-candle backtests use a bounded 360-bar analysis window and bounded recent M5/M15 BTB-zone scan to avoid repeated O(n^2) historical rescans. Context computes ImportantLevels once per analysis. Strategy rules remain unchanged.
