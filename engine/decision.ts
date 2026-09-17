@@ -82,7 +82,13 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
   const mode:UnifiedDecision['consensus']['mode']=selection?'EXECUTE':valid.length?'WATCH':'NO_TRADE';
   const reason=selection
     ?`One valid strategy is sufficient. ${selection.strategy} selected as ${selection.phaseRelation.toLowerCase()} in ${context.phase} phase; H1=${selection.h1Filter}, Daily=${selection.dailyRelation}, Weekly=${selection.weeklyRelation}.`
-    :valid.length?'Valid setup exists but higher-timeframe filter rejected it':'No valid strategy entry yet';
+    :valid.length
+      ? (context.dailyBias==='NEUTRAL'
+        ? `Valid setup exists but Daily H/L structure is ${context.structure.daily.state}; no scalp trade in ambiguity.`
+        : context.phase==='RANGE'
+          ? 'Valid setup exists but market phase is RANGE; no scalp trade.'
+          : 'Valid setup exists but hard execution filters rejected it.')
+      : 'No valid strategy entry yet';
   return {
     symbol:'XAUUSD',timestamp:c.at(-1)?.time??new Date().toISOString(),context,signals,candidates,
     selection:selection?{strategy:selection.strategy,direction:selection.direction,score:selection.score}:null,

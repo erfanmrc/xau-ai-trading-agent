@@ -58,10 +58,21 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   const dailyTrades=new Map<string,number>();
   const rejectionCounts=new Map<string,number>();
   const stats=new Map<StrategyName,BacktestStrategyStats>([['SP2L',emptyStats('SP2L')],['PRO_BTB',emptyStats('PRO_BTB')],['MICROMAP',emptyStats('MICROMAP')]]);
+  const dailySeries=(input.dailyCandles??[]).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
+  const dailyStructureCache=new Map<string,ReturnType<typeof summarizeStructure>>();
+  const getDailyStructureForDay=(dayKey:string)=>{
+    const cached=dailyStructureCache.get(dayKey);
+    if(cached) return cached;
+    const prior=dailySeries.filter(x=>day(x.time)<dayKey);
+    const result=prior.length>=5?summarizeStructure(prior,60):summarizeStructure([]);
+    dailyStructureCache.set(dayKey,result);
+    return result;
+  };
   const lastTradeIndex=new Map<StrategyName,number>();
   const lastLossIndex=new Map<StrategyName,number>();
   let maxDD=0,maxDailyDD=0,maxDailyRiskUsed=0,maxDailyActualRisk=0;
   let deepAnalysisCount=0,fastGateSkipCount=0;
+  let dailyTrendBlockedCandles=0,dailyTrendPrecheckCount=0;
 
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
@@ -209,6 +220,17 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     // take-profit-count limit; the remaining daily safety control is risk.
     if((cfg.maxTradesPerDay>0 && todayTrades>=cfg.maxTradesPerDay) || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
+    // Daily H/L trend is a hard day-level gate. When the completed daily
+    // structure is RANGE/UNCLEAR, the user rule is to avoid scalp entries
+    // during ambiguity/correction. Skip expensive strategy analysis entirely.
+    dailyTrendPrecheckCount++;
+    const dailyStructure=getDailyStructureForDay(currentDay);
+    if(C.analysis.spike.requireDailyTrend && dailyStructure.bias==='NEUTRAL'){
+      dailyTrendBlockedCandles++;
+      addRejection(`Daily H/L trend is ${dailyStructure.state}; no scalp trades in ambiguity`);
+      continue;
+    }
+
     const gate=fastGate(candles.slice(Math.max(0,i-9),i+1));
     let signal;
     if(gate.deepAnalysis){
@@ -240,7 +262,10 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       if(s.status==='VALID' && candidate){
         if(chosen?.strategy===s.strategy) action='EXECUTE';
         else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 filter blocks the strategy direction';}
-        else {action='REJECT';rejectionReason=`Another valid candidate scored higher: ${chosen?.strategy??'none selected'}`;}
+        else if(candidate.dailyRelation!=='CONFIRM'){action='REJECT';rejectionReason=`Daily H/L trend does not confirm ${candidate.direction}: ${signal.context.structure.daily.state}`;}
+        else if(signal.context.phase==='RANGE'){action='REJECT';rejectionReason='Market phase is RANGE; no entry in range interior';}
+        else if(!chosen){action='REJECT';rejectionReason='No eligible strategy selected after hard filters';}
+        else {action='REJECT';rejectionReason=`Another eligible candidate selected: ${chosen.strategy}`;}
       } else if(s.status==='INVALID'){ action='REJECT'; rejectionReason=s.reason; }
       addOpportunity({
         index:i,time:c.time,strategy:s.strategy,direction:s.direction??null,status:s.status,action,score:candidate?.score??s.score,reason:s.reason,rejectionReason,
@@ -386,7 +411,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     validOpportunities:opportunities.filter(x=>x.status==='VALID'),
     opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
-    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2))},
+    performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount},
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }
