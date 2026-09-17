@@ -168,7 +168,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const todayTrades=dailyTrades.get(currentDay)||0;
     if(todayTrades>=cfg.maxTradesPerDay || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
-    const gate=fastGate(candles.slice(Math.max(0,i-8),i+1));
+    const gate=fastGate(candles.slice(Math.max(0,i-9),i+1));
     let signal;
     if(gate.deepAnalysis){
       deepAnalysisCount++;

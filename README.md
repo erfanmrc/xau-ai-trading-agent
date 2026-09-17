@@ -1,6 +1,6 @@
-# XAU AI Trading Agent - Batch 15
+# XAU AI Trading Agent - Batch 16
 
-Batch 15 fixes the 5000-candle timeout at the backtest-engine level.
+Batch 16 fixes the 5000-candle timeout at the backtest-engine level.
 
 ## What changed
 - Two-stage backtest gate: cheap trigger screening first, deep Unified Decision only on trigger-capable candles.
