@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { runBacktest } from '@/engine/backtest/run';
-import { getXauUsdCandles } from '@/data/twelve-data';
+import { getXauUsdCandles, getXauUsdCandlesAdaptive } from '@/data/twelve-data';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,37 +40,56 @@ export async function GET(req:Request){
   const started=Date.now();
   const url=new URL(req.url);
   const requested=Math.max(1500,Math.min(5000,Number(url.searchParams.get('candles')||5000)));
+  const includeDaily=url.searchParams.get('includeDaily')==='1';
 
-  // Keep M1 as the critical dependency. Daily candles are useful context but are
-  // optional because the engine can derive daily structure from the M1 window.
+  // The large M1 request is the only critical upstream dependency. Twelve Data
+  // permits up to 5000 points, but its own docs note that larger historical
+  // requests can take longer. Try the requested size first; on an upstream
+  // timeout, automatically fall back to smaller windows instead of letting the
+  // whole Vercel function die. This keeps the backtest usable under variable API latency.
   const fetchStarted=Date.now();
-  const results=await Promise.allSettled([
-    getXauUsdCandles('1min',requested),
-    getXauUsdCandles('1day',120)
-  ]);
-  const dataFetchMs=Date.now()-fetchStarted;
-
-  const m1=results[0];
-  const daily=results[1];
-
-  if(m1.status==='rejected'){
-    const details=errorDetails(m1.reason);
+  let m1Result;
+  try {
+    m1Result=await getXauUsdCandlesAdaptive('1min',requested);
+  } catch(e){
+    const details=errorDetails(e);
     return NextResponse.json({
       ok:false,
       error:details.message,
       stage:'M1_DATA_FETCH',
       details,
-      diagnostics:{dataFetchMs,totalMs:Date.now()-started,requestedCandles:requested,dailyStatus:daily.status}
+      diagnostics:{
+        dataFetchMs:Date.now()-fetchStarted,
+        totalMs:Date.now()-started,
+        requestedCandles:requested,
+        dailyStatus:'not_started'
+      }
     },{status:504});
   }
+  const dataFetchMs=Date.now()-fetchStarted;
 
-  const candles=m1.value;
-  const dailyCandles=daily.status==='fulfilled'?daily.value:[];
-  const dailyError=daily.status==='rejected'?errorDetails(daily.reason):null;
+  let dailyCandles=[];
+  let dailyStatus:'skipped'|'fulfilled'|'rejected'='skipped';
+  let dailyError:null|ReturnType<typeof errorDetails>=null;
+  let dailyFetchMs=0;
+
+  // Daily data is optional for the backtest. Keeping it out of the critical path
+  // avoids a second upstream request delaying or blocking the core M1 backtest.
+  if(includeDaily){
+    const dailyStarted=Date.now();
+    try{
+      dailyCandles=await getXauUsdCandles('1day',120,{timeoutMs:10000,revalidateSeconds:300});
+      dailyStatus='fulfilled';
+    }catch(e){
+      dailyStatus='rejected';
+      dailyError=errorDetails(e);
+    }
+    dailyFetchMs=Date.now()-dailyStarted;
+  }
 
   const engineStarted=Date.now();
   try {
-    const backtest=runBacktest({candles,dailyCandles});
+    const backtest=runBacktest({candles:m1Result.candles,dailyCandles});
     const engineMs=Date.now()-engineStarted;
     return NextResponse.json({
       ok:true,
@@ -79,10 +98,16 @@ export async function GET(req:Request){
         dataFetchMs,
         engineMs,
         totalMs:Date.now()-started,
-        candleCount:candles.length,
+        candleCount:m1Result.candles.length,
         dailyCandleCount:dailyCandles.length,
         requestedCandles:requested,
-        dailyDataFallback:!!dailyError,
+        actualCandles:m1Result.actual,
+        adaptiveAttempts:m1Result.attempts,
+        adaptiveFallbackUsed:m1Result.fallbackUsed,
+        adaptiveLastError:m1Result.lastError||null,
+        includeDaily,
+        dailyStatus,
+        dailyFetchMs,
         dailyDataError:dailyError
       }
     });
@@ -93,7 +118,17 @@ export async function GET(req:Request){
       error:details.message,
       stage:'ENGINE',
       details,
-      diagnostics:{dataFetchMs,engineMs:Date.now()-engineStarted,totalMs:Date.now()-started,candleCount:candles.length,dailyCandleCount:dailyCandles.length}
+      diagnostics:{
+        dataFetchMs,
+        engineMs:Date.now()-engineStarted,
+        totalMs:Date.now()-started,
+        candleCount:m1Result.candles.length,
+        dailyCandleCount:dailyCandles.length,
+        requestedCandles:requested,
+        actualCandles:m1Result.actual,
+        adaptiveAttempts:m1Result.attempts,
+        adaptiveFallbackUsed:m1Result.fallbackUsed
+      }
     },{status:500});
   }
 }

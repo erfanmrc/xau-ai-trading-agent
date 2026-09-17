@@ -2,6 +2,7 @@ import {Candle} from "@/types/market";
 
 const BASE="https://api.twelvedata.com";
 const DEFAULT_TIMEOUT_MS=60000;
+const ADAPTIVE_TIMEOUTS_MS=[22000,18000,12000];
 
 function apiKey(){
   const k=process.env.TWELVE_DATA_API_KEY;
@@ -34,7 +35,7 @@ export async function getXauUsdQuote(){
   );
 }
 
-export async function getXauUsdCandles(interval="5min",outputsize=100):Promise<Candle[]>{
+export async function getXauUsdCandles(interval="5min",outputsize=100,options:RequestOptions={}):Promise<Candle[]>{
   const safeSize=Math.max(1,Math.min(5000,Math.floor(outputsize)));
   const d=await request<{
     values?:Array<{datetime:string;open:string;high:string;low:string;close:string;volume?:string}>
@@ -42,7 +43,7 @@ export async function getXauUsdCandles(interval="5min",outputsize=100):Promise<C
     `/time_series?symbol=XAU/USD&interval=${encodeURIComponent(interval)}&outputsize=${safeSize}&timezone=UTC`,
     // Historical time-series responses can be slow for large windows. Keep a short
     // server-side cache so repeated backtests do not repeatedly pay the full upstream latency.
-    {timeoutMs:60000,revalidateSeconds:60}
+    {timeoutMs:options.timeoutMs??60000,revalidateSeconds:options.revalidateSeconds??60}
   );
 
   return (d.values||[]).reverse().map(v=>({
@@ -54,3 +55,57 @@ export async function getXauUsdCandles(interval="5min",outputsize=100):Promise<C
     volume:+(v.volume||0)
   }));
 }
+export type AdaptiveCandleResult={
+  candles:Candle[];
+  requested:number;
+  actual:number;
+  attempts:number;
+  fallbackUsed:boolean;
+  lastError?:{name:string;message:string;timeout:boolean};
+};
+
+function isTimeoutError(e:unknown){
+  const err=e instanceof Error?e:null;
+  return /timeout|aborted/i.test(`${err?.name||""} ${err?.message||e||""}`);
+}
+
+function detail(e:unknown){
+  const err=e instanceof Error?e:null;
+  const name=err?.name||"UnknownError";
+  const message=err?.message||String(e);
+  return {name,message,timeout:isTimeoutError(e)};
+}
+
+export async function getXauUsdCandlesAdaptive(interval="1min",outputsize=5000):Promise<AdaptiveCandleResult>{
+  const requested=Math.max(1,Math.min(5000,Math.floor(outputsize)));
+  const sizes=[...new Set([requested, requested>=3000?3000:requested, requested>=1500?1500:requested])];
+  let attempts=0;
+  let lastError:AdaptiveCandleResult["lastError"];
+
+  for(let i=0;i<sizes.length;i++){
+    const size=sizes[i];
+    attempts++;
+    try{
+      const candles=await getXauUsdCandles(interval,size,{
+        timeoutMs:ADAPTIVE_TIMEOUTS_MS[Math.min(i,ADAPTIVE_TIMEOUTS_MS.length-1)],
+        revalidateSeconds:60
+      });
+      return {
+        candles,
+        requested,
+        actual:candles.length,
+        attempts,
+        fallbackUsed:size!==requested,
+        lastError
+      };
+    }catch(e){
+      lastError=detail(e);
+      // Adaptive fallback is only for upstream timeouts. Other Twelve Data errors
+      // (auth, quota, invalid symbol, etc.) should surface immediately.
+      if(!lastError.timeout || i===sizes.length-1) throw e;
+    }
+  }
+
+  throw new Error("Unable to fetch XAU/USD candles");
+}
+
