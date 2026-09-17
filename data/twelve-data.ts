@@ -25,7 +25,16 @@ async function request<T>(path:string,options:RequestOptions={}):Promise<T>{
       : {cache:"no-store",signal:AbortSignal.timeout(timeoutMs)};
 
   const r=await fetch(url,fetchOptions);
-  if(!r.ok) throw new Error(`Twelve Data HTTP ${r.status}`);
+  if(!r.ok){
+    const err= new Error(`Twelve Data HTTP ${r.status}`) as Error & {status?:number;retryAfterMs?:number};
+    err.status=r.status;
+    const retryAfter=r.headers.get("retry-after");
+    if(retryAfter){
+      const seconds=Number(retryAfter);
+      if(Number.isFinite(seconds)) err.retryAfterMs=Math.max(1000,Math.min(30000,Math.round(seconds*1000)));
+    }
+    throw err;
+  }
   const d=await r.json();
   if(d.status==="error") throw new Error(d.message||"Twelve Data error");
   return d;
@@ -64,7 +73,7 @@ export type AdaptiveCandleResult={
   actual:number;
   attempts:number;
   fallbackUsed:boolean;
-  sourceMode?:"DAILY_CHUNKS"|"OUTPUTSIZE";
+  sourceMode?:"DATE_RANGES"|"DAILY_CHUNKS"|"OUTPUTSIZE";
   chunkDays?:number;
   chunkErrors?:Array<{date:string;name:string;message:string;timeout:boolean}>;
   lastError?:{name:string;message:string;timeout:boolean};
@@ -120,41 +129,95 @@ function uniqueSortedCandles(candles:Candle[]):Candle[]{
   return [...seen.values()].sort((a,b)=>a.time.localeCompare(b.time));
 }
 
+async function sleepMs(ms:number){
+  await new Promise<void>(resolve=>setTimeout(resolve,ms));
+}
+
+function utcDateAt(daysAgo:number){
+  const d=new Date();
+  d.setUTCDate(d.getUTCDate()-daysAgo);
+  return d.toISOString().slice(0,10);
+}
+
+async function getXauUsdCandlesForRange(
+  interval="1min",
+  startDate:string,
+  endDate:string,
+  options:RequestOptions={}
+):Promise<Candle[]>{
+  const d=await request<{
+    values?:Array<{datetime:string;open:string;high:string;low:string;close:string;volume?:string}>
+  }>(
+    `/time_series?symbol=XAU/USD&interval=${encodeURIComponent(interval)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&timezone=UTC`,
+    {timeoutMs:options.timeoutMs??DAILY_CHUNK_TIMEOUT_MS,revalidateSeconds:options.revalidateSeconds??300}
+  );
+
+  return (d.values||[]).reverse().map(v=>({
+    time:v.datetime,
+    open:+v.open,
+    high:+v.high,
+    low:+v.low,
+    close:+v.close,
+    volume:+(v.volume||0)
+  }));
+}
+
+async function fetchRangeWith429Retry(
+  startDate:string,
+  endDate:string,
+  maxRetries=2
+):Promise<Candle[]>{
+  let attempt=0;
+  while(true){
+    try{
+      return await getXauUsdCandlesForRange("1min",startDate,endDate,{
+        timeoutMs:DAILY_CHUNK_TIMEOUT_MS,
+        revalidateSeconds:300
+      });
+    }catch(e){
+      const err=e as Error & {status?:number;retryAfterMs?:number};
+      if(err.status!==429 || attempt>=maxRetries) throw e;
+      const waitMs=err.retryAfterMs??10000;
+      await sleepMs(waitMs);
+      attempt++;
+    }
+  }
+}
+
 async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCandleResult>{
   const target=Math.max(1,Math.min(20000,Math.floor(requested)));
   const all:Candle[]=[];
   const chunkErrors:NonNullable<AdaptiveCandleResult["chunkErrors"]>=[];
   let attempts=0;
+  const RANGE_DAYS=3;
+  const MAX_LOOKBACK_DAYS=18;
+  const INTER_CHUNK_DELAY_MS=500;
 
-  for(let offset=0;offset<MAX_DAYS_LOOKBACK && all.length<target;offset+=DAILY_CHUNK_DAYS_PER_BATCH){
-    const dates=Array.from(
-      {length:DAILY_CHUNK_DAYS_PER_BATCH},
-      (_,j)=>utcDateMinusDays(offset+j)
-    );
-
-    const batch=await Promise.allSettled(
-      dates.map(date=>getXauUsdCandlesForDate("1min",date,{
-        timeoutMs:DAILY_CHUNK_TIMEOUT_MS,
-        revalidateSeconds:300
-      }))
-    );
-
-    batch.forEach((result,index)=>{
-      attempts++;
-      if(result.status==="fulfilled") all.push(...result.value);
-      else chunkErrors.push({date:dates[index],...detail(result.reason)});
-    });
+  // A 3-calendar-day range stays below the 5,000-record maximum for XAU/USD
+  // while keeping request count low enough to avoid plan-level 429 throttling.
+  for(let offset=0;offset<MAX_LOOKBACK_DAYS && all.length<target;offset+=RANGE_DAYS){
+    const endDate=utcDateAt(offset);
+    const startDate=utcDateAt(offset+RANGE_DAYS-1);
+    attempts++;
+    try{
+      const values=await fetchRangeWith429Retry(startDate,endDate,2);
+      all.push(...values);
+    }catch(e){
+      chunkErrors.push({date:`${startDate}..${endDate}`,...detail(e)});
+    }
 
     const merged=uniqueSortedCandles(all);
     all.length=0;
     all.push(...merged);
+
+    if(all.length<target) await sleepMs(INTER_CHUNK_DELAY_MS);
   }
 
   const candles=uniqueSortedCandles(all).slice(-target);
   if(candles.length===0){
     const firstError=chunkErrors[0];
-    if(firstError) throw new Error(`Twelve Data daily-chunk fetch failed: ${firstError.message}`);
-    throw new Error("Twelve Data returned no 1-minute candles for the recent daily chunks");
+    if(firstError) throw new Error(`Twelve Data historical-range fetch failed: ${firstError.message}`);
+    throw new Error("Twelve Data returned no 1-minute candles for the requested historical ranges");
   }
 
   return {
@@ -162,9 +225,9 @@ async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCan
     requested:target,
     actual:candles.length,
     attempts,
-    fallbackUsed:true,
-    sourceMode:"DAILY_CHUNKS",
-    chunkDays:Math.min(MAX_DAYS_LOOKBACK,Math.ceil(attempts/DAILY_CHUNK_DAYS_PER_BATCH)*DAILY_CHUNK_DAYS_PER_BATCH),
+    fallbackUsed:candles.length<target,
+    sourceMode:"DATE_RANGES",
+    chunkDays:RANGE_DAYS,
     chunkErrors,
     lastError:chunkErrors[chunkErrors.length-1]
   };
@@ -173,9 +236,9 @@ async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCan
 export async function getXauUsdCandlesAdaptive(interval="1min",outputsize=5000):Promise<AdaptiveCandleResult>{
   const requested=Math.max(1,Math.min(20000,Math.floor(outputsize)));
 
-  // For minute-level backtests, fetching one giant 5000-row response is often
-  // the slowest path on serverless infrastructure. Use small exact-date chunks
-  // first, then fall back to outputsize only if chunking produced nothing.
+  // For minute-level backtests, prefer bounded date ranges over many per-day requests.
+  // Each 3-calendar-day window stays below the 5,000-record limit while keeping
+  // the number of upstream calls low enough to reduce plan-level 429 throttling.
   if(interval==="1min"){
     try{
       return await getRecentMinuteCandlesByDay(requested);
