@@ -1,4 +1,4 @@
-# XAU AI Trading Agent — Batch 12
+# XAU AI Trading Agent — Batch 13
 
 This batch rebuilds the strategy engine around a market-cycle model:
 
@@ -56,3 +56,6 @@ GET:
 `/api/backtest?candles=5000`
 
 The backtest reports strategy-specific opportunity statistics, rejections, daily/weekly context, market phase and X2 diagnostics.
+
+
+Batch 13 performance patch: backtest uses a rolling 1440-M1 analysis window by default (configurable as analysisWindowBars) and the backtest API declares a Node.js runtime with maxDuration=60s where supported by the deployment plan. This preserves 5000-candle coverage while avoiding O(n²)-style repeated full-history analysis.

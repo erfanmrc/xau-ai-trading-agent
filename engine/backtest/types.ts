@@ -11,6 +11,7 @@ export type BacktestConfig={
   allowX2:boolean;
   cooldownBars:number;
   cooldownAfterLossBars:number;
+  analysisWindowBars:number;
 };
 
 export type BacktestOpportunity={

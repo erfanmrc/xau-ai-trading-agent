@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { runBacktest } from '@/engine/backtest/run';
 import { getXauUsdCandles } from '@/data/twelve-data';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
 export async function POST(req:Request){
   try {
     const body=await req.json();

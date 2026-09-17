@@ -15,6 +15,7 @@ const DEFAULTS:BacktestConfig={
   allowX2:true,
   cooldownBars:C.analysis.execution.minCooldownBars,
   cooldownAfterLossBars:C.analysis.execution.minCooldownAfterLossBars,
+  analysisWindowBars:1440,
 };
 
 const day=(t:string)=>new Date(t).toISOString().slice(0,10);
@@ -165,7 +166,9 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const todayTrades=dailyTrades.get(currentDay)||0;
     if(todayTrades>=cfg.maxTradesPerDay || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
-    const signal=analyzeUnified(candles.slice(0,i+1),balance,cfg.spread,input.dailyCandles,input.economicEvents);
+    const windowBars=Math.max(240,Math.min(cfg.analysisWindowBars,candles.length));
+    const analysisStart=Math.max(0,i+1-windowBars);
+    const signal=analyzeUnified(candles.slice(analysisStart,i+1),balance,cfg.spread,input.dailyCandles,input.economicEvents);
     const chosen=signal.selection;
     for(const s of signal.signals){
       const candidate=signal.candidates.find(x=>x.strategy===s.strategy);
