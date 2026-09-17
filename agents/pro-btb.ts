@@ -31,8 +31,10 @@ export function detectProBTB(c:Candle[],balance=C.balance,spread=0):StrategySign
   if(c.length<C.analysis.minCandles) return {strategy:'PRO_BTB',status:'INVALID',score:0,reason:'Insufficient candles for BTB',reasons:['Insufficient candles for BTB'],warnings:[],direction:null};
   const current=c.at(-1)!;
   const m15=resample(c,15),m5=resample(c,5),a=Math.max(atr(m5,14),0.25);
-  const dailyStructure=summarizeStructure(resample(c,1440),60);
-  if(dailyStructure.bias==='NEUTRAL') return {strategy:'PRO_BTB',status:'INVALID',score:0,reason:'BTB blocked: Daily H/L trend is unclear',reasons:['Daily structure is not HH+HL or LH+LL'],warnings:[],direction:null};
+  // Daily direction is NOT derived from H/L inside the BTB detector. The
+  // unified decision layer supplies the Daily Price-Action regime and applies
+  // the hard direction filter. This detector only answers: did price return
+  // to a valid M5/M15 mother-spike breakout zone and reject it?
   const zones=buildMultiTimeframeBTBZones(c).sort((x,y)=>sourceRank(y.source)-sourceRank(x.source)||y.endIndex-x.endIndex);
   let watchedZone:StrategyZone|null=null;
   let watchedReason:string|null=null;
@@ -42,7 +44,6 @@ export function detectProBTB(c:Candle[],balance=C.balance,spread=0):StrategySign
     if(age<1||age>C.analysis.btb.maxZoneAgeBars) continue;
     if(!touchesZoneAfterDeparture(c,tf,z)) continue;
     const d=z.direction;
-    if(dailyStructure.bias!==d) continue;
     const conf=rejection(c,z,d,a);
     if(!conf.ok){
       if(!watchedZone || z.strength>watchedZone.strength){ watchedZone=z; watchedReason=conf.reason; }
