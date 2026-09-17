@@ -2,7 +2,10 @@ import {Candle} from "@/types/market";
 
 const BASE="https://api.twelvedata.com";
 const DEFAULT_TIMEOUT_MS=60000;
-const ADAPTIVE_TIMEOUTS_MS=[22000,18000,12000];
+const ADAPTIVE_TIMEOUTS_MS=[12000,10000,8000];
+const DAILY_CHUNK_TIMEOUT_MS=12000;
+const DAILY_CHUNK_DAYS_PER_BATCH=3;
+const MAX_DAYS_LOOKBACK=14;
 
 function apiKey(){
   const k=process.env.TWELVE_DATA_API_KEY;
@@ -61,6 +64,9 @@ export type AdaptiveCandleResult={
   actual:number;
   attempts:number;
   fallbackUsed:boolean;
+  sourceMode?:"DAILY_CHUNKS"|"OUTPUTSIZE";
+  chunkDays?:number;
+  chunkErrors?:Array<{date:string;name:string;message:string;timeout:boolean}>;
   lastError?:{name:string;message:string;timeout:boolean};
 };
 
@@ -76,36 +82,141 @@ function detail(e:unknown){
   return {name,message,timeout:isTimeoutError(e)};
 }
 
+export async function getXauUsdCandlesForDate(
+  interval="1min",
+  date:string,
+  options:RequestOptions={}
+):Promise<Candle[]>{
+  const d=await request<{
+    values?:Array<{datetime:string;open:string;high:string;low:string;close:string;volume?:string}>
+  }>(
+    `/time_series?symbol=XAU/USD&interval=${encodeURIComponent(interval)}&date=${encodeURIComponent(date)}&timezone=UTC`,
+    {timeoutMs:options.timeoutMs??DAILY_CHUNK_TIMEOUT_MS,revalidateSeconds:options.revalidateSeconds??300}
+  );
+
+  return (d.values||[]).reverse().map(v=>({
+    time:v.datetime,
+    open:+v.open,
+    high:+v.high,
+    low:+v.low,
+    close:+v.close,
+    volume:+(v.volume||0)
+  }));
+}
+
+function utcDateMinusDays(days:number){
+  const d=new Date();
+  d.setUTCDate(d.getUTCDate()-days);
+  return d.toISOString().slice(0,10);
+}
+
+function uniqueSortedCandles(candles:Candle[]):Candle[]{
+  const seen=new Map<string,Candle>();
+  for(const c of candles){
+    if(Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)){
+      seen.set(c.time,c);
+    }
+  }
+  return [...seen.values()].sort((a,b)=>a.time.localeCompare(b.time));
+}
+
+async function getRecentMinuteCandlesByDay(requested:number):Promise<AdaptiveCandleResult>{
+  const target=Math.max(1,Math.min(5000,Math.floor(requested)));
+  const all:Candle[]=[];
+  const chunkErrors:NonNullable<AdaptiveCandleResult["chunkErrors"]>=[];
+  let attempts=0;
+
+  for(let offset=0;offset<MAX_DAYS_LOOKBACK && all.length<target;offset+=DAILY_CHUNK_DAYS_PER_BATCH){
+    const dates=Array.from(
+      {length:DAILY_CHUNK_DAYS_PER_BATCH},
+      (_,j)=>utcDateMinusDays(offset+j)
+    );
+
+    const batch=await Promise.allSettled(
+      dates.map(date=>getXauUsdCandlesForDate("1min",date,{
+        timeoutMs:DAILY_CHUNK_TIMEOUT_MS,
+        revalidateSeconds:300
+      }))
+    );
+
+    batch.forEach((result,index)=>{
+      attempts++;
+      if(result.status==="fulfilled") all.push(...result.value);
+      else chunkErrors.push({date:dates[index],...detail(result.reason)});
+    });
+
+    const merged=uniqueSortedCandles(all);
+    all.length=0;
+    all.push(...merged);
+  }
+
+  const candles=uniqueSortedCandles(all).slice(-target);
+  if(candles.length===0){
+    const firstError=chunkErrors[0];
+    if(firstError) throw new Error(`Twelve Data daily-chunk fetch failed: ${firstError.message}`);
+    throw new Error("Twelve Data returned no 1-minute candles for the recent daily chunks");
+  }
+
+  return {
+    candles,
+    requested:target,
+    actual:candles.length,
+    attempts,
+    fallbackUsed:true,
+    sourceMode:"DAILY_CHUNKS",
+    chunkDays:Math.min(MAX_DAYS_LOOKBACK,Math.ceil(attempts/DAILY_CHUNK_DAYS_PER_BATCH)*DAILY_CHUNK_DAYS_PER_BATCH),
+    chunkErrors,
+    lastError:chunkErrors[chunkErrors.length-1]
+  };
+}
+
 export async function getXauUsdCandlesAdaptive(interval="1min",outputsize=5000):Promise<AdaptiveCandleResult>{
   const requested=Math.max(1,Math.min(5000,Math.floor(outputsize)));
-  const sizes=[...new Set([requested, requested>=3000?3000:requested, requested>=1500?1500:requested])];
-  let attempts=0;
-  let lastError:AdaptiveCandleResult["lastError"];
 
-  for(let i=0;i<sizes.length;i++){
-    const size=sizes[i];
-    attempts++;
+  // For minute-level backtests, fetching one giant 5000-row response is often
+  // the slowest path on serverless infrastructure. Use small exact-date chunks
+  // first, then fall back to outputsize only if chunking produced nothing.
+  if(interval==="1min"){
     try{
-      const candles=await getXauUsdCandles(interval,size,{
-        timeoutMs:ADAPTIVE_TIMEOUTS_MS[Math.min(i,ADAPTIVE_TIMEOUTS_MS.length-1)],
-        revalidateSeconds:60
-      });
-      return {
-        candles,
-        requested,
-        actual:candles.length,
-        attempts,
-        fallbackUsed:size!==requested,
-        lastError
-      };
+      return await getRecentMinuteCandlesByDay(requested);
     }catch(e){
-      lastError=detail(e);
-      // Adaptive fallback is only for upstream timeouts. Other Twelve Data errors
-      // (auth, quota, invalid symbol, etc.) should surface immediately.
-      if(!lastError.timeout || i===sizes.length-1) throw e;
+      const last=detail(e);
+      const sizes=[...new Set([requested, requested>=3000?3000:requested, requested>=1500?1500:requested])];
+      let attempts=0;
+      let lastError=last;
+
+      for(let i=0;i<sizes.length;i++){
+        const size=sizes[i];
+        attempts++;
+        try{
+          const candles=await getXauUsdCandles(interval,size,{
+            timeoutMs:ADAPTIVE_TIMEOUTS_MS[Math.min(i,ADAPTIVE_TIMEOUTS_MS.length-1)],
+            revalidateSeconds:60
+          });
+          return {
+            candles,
+            requested,
+            actual:candles.length,
+            attempts,
+            fallbackUsed:size!==requested,
+            sourceMode:"OUTPUTSIZE",
+            lastError
+          };
+        }catch(err){
+          lastError=detail(err);
+          if(!lastError.timeout || i===sizes.length-1) throw err;
+        }
+      }
     }
   }
 
-  throw new Error("Unable to fetch XAU/USD candles");
+  const candles=await getXauUsdCandles(interval,requested,{timeoutMs:DEFAULT_TIMEOUT_MS,revalidateSeconds:60});
+  return {
+    candles,
+    requested,
+    actual:candles.length,
+    attempts:1,
+    fallbackUsed:false,
+    sourceMode:"OUTPUTSIZE"
+  };
 }
-

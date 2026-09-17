@@ -105,6 +105,9 @@ export async function GET(req:Request){
         actualCandles:m1Result.actual,
         adaptiveAttempts:m1Result.attempts,
         adaptiveFallbackUsed:m1Result.fallbackUsed,
+        adaptiveSourceMode:m1Result.sourceMode||null,
+        adaptiveChunkDays:m1Result.chunkDays||null,
+        adaptiveChunkErrors:m1Result.chunkErrors||[],
         adaptiveLastError:m1Result.lastError||null,
         includeDaily,
         dailyStatus,
@@ -128,7 +131,10 @@ export async function GET(req:Request){
         requestedCandles:requested,
         actualCandles:m1Result.actual,
         adaptiveAttempts:m1Result.attempts,
-        adaptiveFallbackUsed:m1Result.fallbackUsed
+        adaptiveFallbackUsed:m1Result.fallbackUsed,
+        adaptiveSourceMode:m1Result.sourceMode||null,
+        adaptiveChunkDays:m1Result.chunkDays||null,
+        adaptiveChunkErrors:m1Result.chunkErrors||[]
       }
     },{status:500});
   }
