@@ -1,25 +1,22 @@
-# XAU AI Trading Agent — Patch 42
+# XAU AI Trading Agent — Patch 43
 
-## Purpose
-Patch 42 makes the `requireLiquidityOrOrderBlock` rule an actual execution hard-gate in both layers:
+Purpose: make the Liquidity/Order Block execution requirement self-verifying and enforce it at the final position-opening point.
 
-1. `engine/decision.ts` — candidates without direction-matched liquidity evidence or a direction-matched order block are not eligible for selection when the config flag is enabled.
-2. `engine/backtest/run.ts` — the backtest execution layer independently re-checks the same rule before opening a position, preventing a stale/older decision path from bypassing the hard-gate.
+Files to replace:
+- engine/decision.ts
+- engine/backtest/run.ts
 
-Volume Profile remains soft context only.
+Config prerequisite:
+- config/strategy.ts must keep `analysis.priceAction.requireLiquidityOrOrderBlock: true`.
 
-## Files to replace
-- `engine/decision.ts`
-- `engine/backtest/run.ts`
+Patch 43 adds a final execution invariant immediately before constructing `OpenPosition`, and exposes:
+- `engineRevision: "PATCH43_LIQUIDITY_HARD_GATE"`
+- `liquidityGate.required`
+- `liquidityGate.selectedStrategy`
+- `liquidityGate.executionStrategy`
+- `liquidityGate.selectedHasDirectionMatchedEvidence`
 
-## Expected change
-A setup such as:
-- `liquidityScore: 0`
-- `liquidityLabels: []`
-- `orderBlock: null`
-
-must not be executed when:
-`config.analysis.priceAction.requireLiquidityOrOrderBlock === true`.
-
-The backtest records an explicit rejection reason:
-`Liquidity/Order Block required for execution: no qualifying nearby direction-matched liquidity or order block`
+Expected result for the previously offending 2026-09-16 17:04 SP2L SHORT:
+- it must NOT be present in `trades[]`.
+- its valid opportunity must be `action: "REJECT"` with a Liquidity/Order Block rejection reason.
+- the backtest response must contain `engineRevision: "PATCH43_LIQUIDITY_HARD_GATE"`.

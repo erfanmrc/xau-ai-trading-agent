@@ -316,6 +316,17 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     }
 
     if(!executionChosen) continue;
+    // Final execution invariant: even if an upstream selector is stale or inconsistent,
+    // no position may be opened without direction-matched Liquidity/Order Block evidence
+    // when the strategy configuration requires it. Keep this gate immediately before
+    // constructing the OpenPosition so the execution path itself enforces the rule.
+    if(executionLiquidityRequired){
+      const finalCandidate=signal.candidates.find(x=>x.strategy===executionChosen.strategy);
+      if(!finalCandidate || !hasRequiredLiquidityOrOrderBlock(finalCandidate)){
+        markOpportunity(i,executionChosen.strategy,'REJECT','Liquidity/Order Block required for execution: final execution invariant failed');
+        continue;
+      }
+    }
     const source=signal.signals.find(x=>x.strategy===executionChosen.strategy);
     if(!source?.direction||source.entry==null||source.stop==null||!source.risk){markOpportunity(i,executionChosen.strategy,'REJECT','Selected signal lacks complete entry/risk plan');continue;}
 
@@ -449,7 +460,9 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
     performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount,dailyPAByDay:[...dailyPAStates.entries()].map(([day,state])=>({day,state:state.state,bias:state.bias,confirmed:state.confirmed,entryReady:state.entryReady,correction:state.correction,score:state.score,pressure:state.pressure,recentImpulse:state.recentImpulse,candleQuality:state.candleQuality,reason:state.reason})),
-      liquidityDiagnostics:liquidityContextStats} as any,
+      liquidityDiagnostics:liquidityContextStats},
+    engineRevision:'PATCH43_LIQUIDITY_HARD_GATE',
+    liquidityGate:{required:executionLiquidityRequired,selectedStrategy:chosen?.strategy??null,executionStrategy:executionChosen?.strategy??null,selectedHasDirectionMatchedEvidence:chosenHasLiquidityOrOrderBlock},
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }
