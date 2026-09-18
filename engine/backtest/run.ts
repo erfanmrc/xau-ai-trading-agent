@@ -76,7 +76,8 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   let dailyTrendBlockedCandles=0,dailyTrendPrecheckCount=0;
   const dailyPAStates=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
   let liquidityContextStats={deepAnalyses:0,withSweep:0,withOrderBlock:0,withLiquidityPoolNear:0,volumeProfileAvailable:0};
-const executionLiquidityRequired=C.analysis.priceAction.requireLiquidityOrOrderBlock;
+
+  const executionLiquidityRequired=C.analysis.priceAction.requireLiquidityOrOrderBlock;
 let lastSelectedStrategy:StrategyName|null=null;
 let lastExecutionStrategy:StrategyName|null=null;
 let lastSelectedHasDirectionMatchedEvidence=false;
@@ -269,7 +270,6 @@ let lastSelectedHasDirectionMatchedEvidence=false;
     }
     const chosen=signal.selection;
     const chosenCandidate=chosen?.strategy ? signal.candidates.find(x=>x.strategy===chosen.strategy) : undefined;
-    const executionLiquidityRequired=C.analysis.priceAction.requireLiquidityOrOrderBlock;
     const hasRequiredLiquidityOrOrderBlock=(candidate:NonNullable<typeof chosenCandidate>) =>
       candidate.orderBlock?.direction === candidate.direction ||
       candidate.liquidityLabels.some(label =>
@@ -281,6 +281,10 @@ let lastSelectedHasDirectionMatchedEvidence=false;
       ? 'Liquidity/Order Block required for execution: no qualifying nearby liquidity or order block'
       : null;
 
+    lastSelectedStrategy=chosen?.strategy??null;
+lastExecutionStrategy=executionChosen?.strategy??null;
+lastSelectedHasDirectionMatchedEvidence=chosenHasLiquidityOrOrderBlock;
+    
     for(const s of signal.signals){
       const candidate=signal.candidates.find(x=>x.strategy===s.strategy);
       let action:'EXECUTE'|'WATCH'|'REJECT'='WATCH';
@@ -465,7 +469,6 @@ let lastSelectedHasDirectionMatchedEvidence=false;
     performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount,dailyPAByDay:[...dailyPAStates.entries()].map(([day,state])=>({day,state:state.state,bias:state.bias,confirmed:state.confirmed,entryReady:state.entryReady,correction:state.correction,score:state.score,pressure:state.pressure,recentImpulse:state.recentImpulse,candleQuality:state.candleQuality,reason:state.reason})),
       liquidityDiagnostics:liquidityContextStats},
     engineRevision:'PATCH43_LIQUIDITY_HARD_GATE',
-    liquidityGate:{required:executionLiquidityRequired,selectedStrategy:chosen?.strategy??null,executionStrategy:executionChosen?.strategy??null,selectedHasDirectionMatchedEvidence:chosenHasLiquidityOrOrderBlock},
-    dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
+liquidityGate:{required:executionLiquidityRequired,selectedStrategy:lastSelectedStrategy,executionStrategy:lastExecutionStrategy,selectedHasDirectionMatchedEvidence:lastSelectedHasDirectionMatchedEvidence},    dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }
