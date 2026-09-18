@@ -5,6 +5,7 @@ import { detectProBTB } from '@/agents/pro-btb';
 import { detectMicroMap } from '@/agents/micromap';
 import { buildContext } from '@/engine/context';
 import { assessLiquidityConfluence } from '@/engine/liquidity';
+import { STRATEGY_CONFIG as C } from '@/config/strategy';
 
 export type DecisionCandidate={
   strategy:StrategyName; direction:'LONG'|'SHORT'; score:number; entry:number; stop:number; signalTime:string;
@@ -77,6 +78,17 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     // H/L remains critical for execution levels and lower-timeframe structure.
     if(x.dailyRelation!=='CONFIRM') return false;
     if(!context.dailyPriceAction.confirmed || context.dailyPriceAction.entryReady === false || context.dailyPriceAction.correction) return false;
+
+    // When enabled, a valid strategy setup must also have nearby liquidity
+    // or an identified order block. Volume profile remains soft context only.
+    const hasLiquidityOrOrderBlock =
+      x.orderBlock !== null ||
+      x.liquidityLabels.some(label => label.includes('LIQUIDITY'));
+
+    if(C.analysis.priceAction.requireLiquidityOrOrderBlock && !hasLiquidityOrOrderBlock) {
+      return false;
+    }
+
     if(context.phase==='RANGE') return false;
     return true;
   });
