@@ -76,7 +76,10 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   let dailyTrendBlockedCandles=0,dailyTrendPrecheckCount=0;
   const dailyPAStates=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
   let liquidityContextStats={deepAnalyses:0,withSweep:0,withOrderBlock:0,withLiquidityPoolNear:0,volumeProfileAvailable:0};
-
+const executionLiquidityRequired=C.analysis.priceAction.requireLiquidityOrOrderBlock;
+let lastSelectedStrategy:StrategyName|null=null;
+let lastExecutionStrategy:StrategyName|null=null;
+let lastSelectedHasDirectionMatchedEvidence=false;
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
     opportunities.push(o);
