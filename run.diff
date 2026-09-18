@@ -1,0 +1,129 @@
+--- engine/backtest/run.ts	2026-09-17 23:36:58.000000000 +0000
++++ /mnt/data/patch42/engine/backtest/run.ts	2026-09-18 20:48:22.622436098 +0000
+@@ -265,17 +265,37 @@
+       if(lm.volumeProfile.status==='AVAILABLE') liquidityContextStats.volumeProfileAvailable++;
+     }
+     const chosen=signal.selection;
++    const chosenCandidate=chosen?.strategy ? signal.candidates.find(x=>x.strategy===chosen.strategy) : undefined;
++    const executionLiquidityRequired=C.analysis.priceAction.requireLiquidityOrOrderBlock;
++    const hasRequiredLiquidityOrOrderBlock=(candidate:NonNullable<typeof chosenCandidate>) =>
++      candidate.orderBlock?.direction === candidate.direction ||
++      candidate.liquidityLabels.some(label =>
++        label.includes('LIQUIDITY') && label.startsWith(`${candidate.direction}_`)
++      );
++    const chosenHasLiquidityOrOrderBlock=!!chosenCandidate && hasRequiredLiquidityOrOrderBlock(chosenCandidate);
++    const executionChosen=(chosen && (!executionLiquidityRequired || chosenHasLiquidityOrOrderBlock)) ? chosen : null;
++    const executionGateRejection=chosen && executionLiquidityRequired && !chosenHasLiquidityOrOrderBlock
++      ? 'Liquidity/Order Block required for execution: no qualifying nearby liquidity or order block'
++      : null;
++
+     for(const s of signal.signals){
+       const candidate=signal.candidates.find(x=>x.strategy===s.strategy);
+       let action:'EXECUTE'|'WATCH'|'REJECT'='WATCH';
+       let rejectionReason:string|null=null;
+       if(s.status==='VALID' && candidate){
+-        if(chosen?.strategy===s.strategy) action='EXECUTE';
++        if(chosen?.strategy===s.strategy){
++          if(executionGateRejection){action='REJECT';rejectionReason=executionGateRejection;}
++          else action='EXECUTE';
++        }
+         else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 filter blocks the strategy direction';}
+         else if(candidate.dailyRelation!=='CONFIRM'){action='REJECT';rejectionReason=`Daily price action does not confirm ${candidate.direction}: ${signal.context.dailyPriceAction.state}`;}
++        else if(executionLiquidityRequired && !hasRequiredLiquidityOrOrderBlock(candidate)){
++          action='REJECT';
++          rejectionReason='Liquidity/Order Block required for execution: no qualifying nearby direction-matched liquidity or order block';
++        }
+         else if(signal.context.phase==='RANGE'){action='REJECT';rejectionReason='Market phase is RANGE; no entry in range interior';}
+-        else if(!chosen){action='REJECT';rejectionReason='No eligible strategy selected after hard filters';}
+-        else {action='REJECT';rejectionReason=`Another eligible candidate selected: ${chosen.strategy}`;}
++        else if(!executionChosen){action='REJECT';rejectionReason=executionGateRejection??'No eligible strategy selected after hard filters';}
++        else {action='REJECT';rejectionReason=`Another eligible candidate selected: ${executionChosen.strategy}`;}
+       } else if(s.status==='INVALID'){ action='REJECT'; rejectionReason=s.reason; }
+       addOpportunity({
+         index:i,time:c.time,strategy:s.strategy,direction:s.direction??null,status:s.status,action,score:candidate?.score??s.score,reason:s.reason,rejectionReason,
+@@ -295,23 +315,23 @@
+       });
+     }
+ 
+-    if(!chosen) continue;
+-    const source=signal.signals.find(x=>x.strategy===chosen.strategy);
+-    if(!source?.direction||source.entry==null||source.stop==null||!source.risk){markOpportunity(i,chosen.strategy,'REJECT','Selected signal lacks complete entry/risk plan');continue;}
++    if(!executionChosen) continue;
++    const source=signal.signals.find(x=>x.strategy===executionChosen.strategy);
++    if(!source?.direction||source.entry==null||source.stop==null||!source.risk){markOpportunity(i,executionChosen.strategy,'REJECT','Selected signal lacks complete entry/risk plan');continue;}
+ 
+-    const lastTrade=lastTradeIndex.get(chosen.strategy);
++    const lastTrade=lastTradeIndex.get(executionChosen.strategy);
+     if(lastTrade!=null && i-lastTrade<cfg.cooldownBars){
+-      markOpportunity(i,chosen.strategy,'REJECT',`Strategy cooldown active (${cfg.cooldownBars} bars)`); continue;
++      markOpportunity(i,executionChosen.strategy,'REJECT',`Strategy cooldown active (${cfg.cooldownBars} bars)`); continue;
+     }
+-    const lastLoss=lastLossIndex.get(chosen.strategy);
++    const lastLoss=lastLossIndex.get(executionChosen.strategy);
+     if(lastLoss!=null && i-lastLoss<cfg.cooldownAfterLossBars){
+-      markOpportunity(i,chosen.strategy,'REJECT',`Post-loss cooldown active (${cfg.cooldownAfterLossBars} bars)`); continue;
++      markOpportunity(i,executionChosen.strategy,'REJECT',`Post-loss cooldown active (${cfg.cooldownAfterLossBars} bars)`); continue;
+     }
+ 
+     const entry=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].open:source.entry;
+     const stop=source.stop;
+     const entryRisk=pipsRisk(entry,stop,source.direction);
+-    if(entryRisk<=0){markOpportunity(i,chosen.strategy,'REJECT','Entry/stop geometry is invalid after execution-price adjustment');continue;}
++    if(entryRisk<=0){markOpportunity(i,executionChosen.strategy,'REJECT','Entry/stop geometry is invalid after execution-price adjustment');continue;}
+ 
+     const plan=targetPlan(source,entry,stop,cfg.spread);
+     const stage=source.targetMode==='X2_LEG1_MINUS_SPREAD'?'X2':source.targetMode==='SINGLE_LEG1_MINUS_SPREAD'?'SINGLE':'OTHER';
+@@ -319,33 +339,33 @@
+       ? plan.rr>=C.singleStageMinRR-1e-9 && plan.rr<=C.singleStageMaxRR+1e-9
+       : stage==='X2'
+         ? plan.rr>=C.twoStageMinRR-1e-9 && plan.rr<=C.twoStageMaxRR+1e-9
+-        : chosen.strategy==='PRO_BTB'
++        : executionChosen.strategy==='PRO_BTB'
+           ? plan.rr>=C.btbMinRR-1e-9
+-          : chosen.strategy==='MICROMAP'
++          : executionChosen.strategy==='MICROMAP'
+             ? plan.rr>=C.analysis.microMap.minRR-1e-9
+             : false;
+-    if(!targetAllowed){markOpportunity(i,chosen.strategy,'REJECT',`Leg-1 target RR ${plan.rr.toFixed(2)}R falls outside ${stage==='SINGLE'?'1-2R':stage==='X2'?'2-5R':stage==='OTHER'&&chosen.strategy==='MICROMAP'?'>4R':'BTB >=2R'} after execution-price adjustment`);continue;}
++    if(!targetAllowed){markOpportunity(i,executionChosen.strategy,'REJECT',`Leg-1 target RR ${plan.rr.toFixed(2)}R falls outside ${stage==='SINGLE'?'1-2R':stage==='X2'?'2-5R':stage==='OTHER'&&executionChosen.strategy==='MICROMAP'?'>4R':'BTB >=2R'} after execution-price adjustment`);continue;}
+ 
+-    const x2EnabledForTrade=cfg.allowX2 && chosen.strategy!=='MICROMAP' && stage!=='SINGLE';
++    const x2EnabledForTrade=cfg.allowX2 && executionChosen.strategy!=='MICROMAP' && stage!=='SINGLE';
+     const liveRisk=buildRisk(source.direction,entry,stop,balance,C.riskPercent,cfg.spread,plan.rr,x2EnabledForTrade);
+-    if(!liveRisk.tradable||!liveRisk.lotSize){markOpportunity(i,chosen.strategy,'REJECT','Risk engine rejected the position size');continue;}
+-    if(stage==='X2' && (!liveRisk.x2Entry||!liveRisk.x2LotSize)){markOpportunity(i,chosen.strategy,'REJECT','Two-stage setup requires the combined 1% X2 risk plan');continue;}
++    if(!liveRisk.tradable||!liveRisk.lotSize){markOpportunity(i,executionChosen.strategy,'REJECT','Risk engine rejected the position size');continue;}
++    if(stage==='X2' && (!liveRisk.x2Entry||!liveRisk.x2LotSize)){markOpportunity(i,executionChosen.strategy,'REJECT','Two-stage setup requires the combined 1% X2 risk plan');continue;}
+     const initialRisk=initialRiskPercent(liveRisk.lotSize,entry,stop,balance,cfg.spread);
+     const combinedRisk=liveRisk.combinedRiskPercent??initialRisk;
+     const x2RiskPct=x2EnabledForTrade&&liveRisk.x2Entry!==null&&liveRisk.x2LotSize!==null?Math.max(0,combinedRisk-initialRisk):0;
+     const nowUsed=dailyRiskUsed.get(currentDay)||0;
+     // At entry only the first 0.5% is committed. The extra ~0.5% is committed
+     // only when X2 actually activates at the midpoint.
+-    if(nowUsed+initialRisk>cfg.dailyRiskLimitPercent+1e-9){markOpportunity(i,chosen.strategy,'REJECT','Daily initial-risk budget would be exceeded');continue;}
++    if(nowUsed+initialRisk>cfg.dailyRiskLimitPercent+1e-9){markOpportunity(i,executionChosen.strategy,'REJECT','Daily initial-risk budget would be exceeded');continue;}
+ 
+     const tp=plan.tp;
+     const entry2=x2EnabledForTrade?liveRisk.x2Entry??null:null;
+     const lot2=x2EnabledForTrade?liveRisk.x2LotSize??0:0;
+     const entryTime=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].time:c.time;
+     open={
+-      strategy:chosen.strategy,direction:chosen.direction,signalTime:c.time,entryTime,entryBar:(i+1<candles.length&&cfg.execution==='NEXT_OPEN'?i+1:i),entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
++      strategy:executionChosen.strategy,direction:executionChosen.direction,signalTime:c.time,entryTime,entryBar:(i+1<candles.length&&cfg.execution==='NEXT_OPEN'?i+1:i),entry,entry2,lot:liveRisk.lotSize,lot2,stop,tp,
+       plannedRiskPercent:Number((initialRisk+x2RiskPct).toFixed(4)),initialRiskPercent:Number(initialRisk.toFixed(4)),x2RiskPercent:Number(x2RiskPct.toFixed(4)),
+-      x2Activated:false,x2ActivationTime:null,favorableMove:0,mfeR:0,setupScore:chosen.score,x2TriggeredAtR:null,
++      x2Activated:false,x2ActivationTime:null,favorableMove:0,mfeR:0,setupScore:executionChosen.score,x2TriggeredAtR:null,
+       targetLegSize:plan.leg1,targetDistance:plan.targetDistance,plannedRR:plan.rr,targetReached:false,
+       marketPhase:signal.context.phase,dailyBias:signal.context.dailyBias,weeklyBias:signal.context.weeklyBias,
+       dailyTrendState:signal.context.dailyPriceAction.state
+@@ -353,8 +373,8 @@
+     dailyRiskUsed.set(currentDay,nowUsed+initialRisk);
+     dailyActualRisk.set(currentDay,(dailyActualRisk.get(currentDay)||0)+initialRisk);
+     dailyTrades.set(currentDay,(dailyTrades.get(currentDay)||0)+1);
+-    lastTradeIndex.set(chosen.strategy,i);
+-    stats.get(chosen.strategy)!.executed++;
++    lastTradeIndex.set(executionChosen.strategy,i);
++    stats.get(executionChosen.strategy)!.executed++;
+   }
+ 
+   if(open){

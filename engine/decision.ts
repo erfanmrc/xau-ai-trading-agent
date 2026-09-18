@@ -82,8 +82,10 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     // When enabled, a valid strategy setup must also have nearby liquidity
     // or an identified order block. Volume profile remains soft context only.
     const hasLiquidityOrOrderBlock =
-      x.orderBlock !== null ||
-      x.liquidityLabels.some(label => label.includes('LIQUIDITY'));
+      x.orderBlock?.direction === x.direction ||
+      x.liquidityLabels.some(label =>
+        label.includes('LIQUIDITY') && label.startsWith(`${x.direction}_`)
+      );
 
     if(C.analysis.priceAction.requireLiquidityOrOrderBlock && !hasLiquidityOrOrderBlock) {
       return false;

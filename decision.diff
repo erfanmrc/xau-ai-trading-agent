@@ -1,0 +1,30 @@
+--- engine/decision.ts	2026-09-17 23:36:19.000000000 +0000
++++ /mnt/data/patch42/engine/decision.ts	2026-09-18 20:48:41.246628352 +0000
+@@ -5,6 +5,7 @@
+ import { detectMicroMap } from '@/agents/micromap';
+ import { buildContext } from '@/engine/context';
+ import { assessLiquidityConfluence } from '@/engine/liquidity';
++import { STRATEGY_CONFIG as C } from '@/config/strategy';
+ 
+ export type DecisionCandidate={
+   strategy:StrategyName; direction:'LONG'|'SHORT'; score:number; entry:number; stop:number; signalTime:string;
+@@ -77,6 +78,19 @@
+     // H/L remains critical for execution levels and lower-timeframe structure.
+     if(x.dailyRelation!=='CONFIRM') return false;
+     if(!context.dailyPriceAction.confirmed || context.dailyPriceAction.entryReady === false || context.dailyPriceAction.correction) return false;
++
++    // When enabled, a valid strategy setup must also have nearby liquidity
++    // or an identified order block. Volume profile remains soft context only.
++    const hasLiquidityOrOrderBlock =
++      x.orderBlock?.direction === x.direction ||
++      x.liquidityLabels.some(label =>
++        label.includes('LIQUIDITY') && label.startsWith(`${x.direction}_`)
++      );
++
++    if(C.analysis.priceAction.requireLiquidityOrOrderBlock && !hasLiquidityOrOrderBlock) {
++      return false;
++    }
++
+     if(context.phase==='RANGE') return false;
+     return true;
+   });
