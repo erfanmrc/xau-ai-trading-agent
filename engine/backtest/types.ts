@@ -14,7 +14,6 @@ export type BacktestConfig={
   cooldownAfterLossBars:number;
   analysisWindowBars:number;
 };
-
 export type BacktestOpportunity={
   index:number;
   time:string;
@@ -48,7 +47,6 @@ export type BacktestOpportunity={
   volumeProfilePoc?:number|null;
   liquidityMethodology?:'PRICE_ACTION_PROXY';
 };
-
 export type BacktestStrategyStats={
   strategy:StrategyName;
   opportunities:number;
@@ -65,7 +63,6 @@ export type BacktestStrategyStats={
   winRate:number;
   profitFactor:number|null;
 };
-
 export type BacktestTrade={
   id:number;
   strategy:StrategyName;
@@ -91,9 +88,7 @@ export type BacktestTrade={
   outcome:'TP'|'SL'|'TREND_EXIT'|'EOD';
   diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; exitReason?:'STOP'|'TARGET'|'EOD'; targetReached?:boolean; plannedRR?:number; leg1Size?:number; dailyTrendState?:string; };
 };
-
 export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number;dailyPAByDay?:{day:string;state:string;bias:string;confirmed:boolean;entryReady?:boolean;correction:boolean;score:number;pressure:number;recentImpulse:number;candleQuality:number;reason:string}[];liquidityDiagnostics?:{deepAnalyses:number;withSweep:number;withOrderBlock:number;withLiquidityPoolNear:number;volumeProfileAvailable:number}};
-
 export type BacktestResult={
   config:BacktestConfig;
   initialBalance:number;
@@ -126,7 +121,13 @@ export type BacktestResult={
   opportunityStats:BacktestStrategyStats[];
   rejectionReasons:{reason:string;count:number}[];
   performance:BacktestPerformance;
+  engineRevision:string;
+  liquidityGate:{
+    required:boolean;
+    selectedStrategy:StrategyName|null;
+    executionStrategy:StrategyName|null;
+    selectedHasDirectionMatchedEvidence:boolean;
+  };
   dataCoverage:{start:string|null;end:string|null;calendarDays:number;tradingDaysWithData:number;candles:number};
 };
-
 export type BacktestInput={candles:Candle[];dailyCandles?:Candle[];economicEvents?:import('@/types/market').EconomicEvent[];config?:Partial<BacktestConfig>;propRules?:Partial<BacktestResult['propRules']>};
