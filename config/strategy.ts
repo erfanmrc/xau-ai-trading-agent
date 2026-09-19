@@ -20,45 +20,52 @@ export const STRATEGY_CONFIG = {
   maxStopPercent:1.5,
   analysis:{
     minCandles:40,
+    opportunityTargetPerDay:10,
     spike:{
-      minStrongCandles:3, maxStrongCandles:4,
-      bodyToRangeMin:0.60, closeLocationMin:0.72, oppositeWickMax:0.25,
-      expansionVsMedian:1.10, minDisplacementATR:0.65, minEfficiency:0.48,
-      minPressureGapATR:0.04, minNonOverlapGapATR:0.03,
-      maxExtensionATR:6.00, maxStopATR:2.00,
-      maxReturnBeyondBreakoutATR:0.15, maxReturnDepth:0.60, maxReturnCandleATR:0.90,
-      minLeg2BodyToRange:0.55, leg2CloseInDirection:0.68,
-      maxSpikeAgeBars:18, minContextScore:1,
-      requireDailyTrend:true,
-      requireStructuralBreak:true,
-      minOriginLevelScore:0,
-      rejectRangeInterior:true,
-      rangeEdgeToleranceATR:0.25
+      minCandles:3,
+      maxCandles:8,
+      minBodyQuality:0.45,
+      minCloseProgress:0.66,
+      minDisplacementATR:0.65,
+      minEfficiency:0.42,
+      minPressure:0.38,
+      resetLookbackBars:3,
+      minStartExpansionRatio:1.15,
+      maxAgeBars:18,
+      activeAgeBars:2,
+      maxExtensionATR:5.5,
+      maxStopATR:2.00,
+      requireDailyTrend:true
     },
-    imbalance:{minGapATR:0.06,atrLength:14},
-    pullback:{minRetrace:0,maxRetrace:0.65,maxBarsAfterImpulse:4},
+    regime:{
+      emaLookback:18,minEmaSeparationATR:0.06,minEmaSlopeATR:0.015,minCloseSideRatio:0.55,
+      channelLookback:12,rangeLookback:18,minRangeEmaCrosses:4,
+      activeM1SpikeBars:2,activeM5SpikeBars:1,activeM15SpikeBars:0
+    },
+    imbalance:{minGapATR:0.04,atrLength:14},
+    pullback:{minRetrace:0.10,maxRetrace:0.70,maxBarsAfterImpulse:4},
     confirmation:{minBodyToRange:0.50,closeInDirection:0.64},
     microMap:{
-      minChannelBars:3,maxChannelBars:6,maxPullbackBars:2,maxTriggerDistanceATR:0.65,
+      minChannelBars:3,maxChannelBars:8,maxPullbackBars:2,maxTriggerDistanceATR:0.70,minFastBreakoutATR:0.25,
       maxStopATR:0.90,minRR:4,maxRR:12,x2Enabled:false
     },
     btb:{
-      maxZoneAgeBars:36,returnWindowBars:24,minDepartureBars:3,breakoutLookback:5,
-      minDepartureATR:0.85,zonePaddingATR:0.08,maxStopATR:1.75,rejectionCloseATR:0.06,
-      maxEntryFromZoneATR:0.50,requireTwoStepM1Rejection:true,
-      minM1RejectionBodyToRange:0.55,minM1RejectionCloseInDirection:0.64,
+      maxZoneAgeBars:36,returnWindowBars:24,minDepartureBars:2,breakoutLookback:5,
+      minDepartureATR:0.70,zonePaddingATR:0.08,maxStopATR:1.75,rejectionCloseATR:0.05,
+      maxEntryFromZoneATR:0.55,requireTwoStepM1Rejection:false,
+      minM1RejectionBodyToRange:0.50,minM1RejectionCloseInDirection:0.62,
       m1SourceEnabled:false,m5Enabled:true,m15Enabled:true,targetRR:2.0,
       rangeEdgeToleranceATR:0.25,rejectRangeInterior:true
     },
     execution:{minCooldownBars:0,minCooldownAfterLossBars:0,minFavorableRForX2:0.30},
     trendExit:{
-      lookbackBars:20,
-      minStrongCandles:2,
-      minBodyToRange:0.55,
-      minCloseLocation:0.65,
-      breakSwingATR:0.05
+      lookbackBars:20,minStrongCandles:2,minBodyToRange:0.55,minCloseLocation:0.65,breakSwingATR:0.05
     },
-    context:{rangeLookbackBars:25,maxRangeWidthATR:2.8,rangeEdgeToleranceATR:0.25,requireHigherTFSupportWhenH1Neutral:true},
+    context:{
+      rangeLookbackBars:25,maxRangeWidthATR:2.8,rangeEdgeToleranceATR:0.25,requireHigherTFSupportWhenH1Neutral:true,
+      channelMaxWidthATR:4.5,channelAvgRangeATR:0.95,channelMedianRangeATR:1.05,channelOverlapRatio:0.55,
+      rangeMaxWidthATR:2.8,rangeOverlapRatio:0.72,minRangeEmaCrosses:4
+    },
     priceAction:{locationMinScore:2,requireLiquidityOrOrderBlock:true,volumeProfileSoftContextOnly:true}
   }
 };

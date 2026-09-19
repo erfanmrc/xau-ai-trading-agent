@@ -1,74 +1,69 @@
-import { Candle, StrategySignal } from '@/types/market';
+import { Candle, Direction, StrategySignal } from '@/types/market';
+import type { MarketContext } from '@/types/market';
 import { STRATEGY_CONFIG as C } from '@/config/strategy';
 import { atr, bodyRatio, candleDirection, closeLocation, median } from '@/engine/indicators';
-import { buildRisk } from '@/engine/risk';
-import { summarizeStructure, classifyMarketPhase } from '@/engine/market-structure';
+import { nearestFVG } from '@/engine/regime';
 import { assessEntryConfluence } from '@/engine/levels';
+import { assessLiquidityConfluence } from '@/engine/liquidity';
+import { buildRisk } from '@/engine/risk';
+import { buildContext } from '@/engine/context';
 
 function invalid(reason:string,warnings:string[]=[]):StrategySignal{return {strategy:'MICROMAP',status:'INVALID',score:0,reason,reasons:[reason],warnings,direction:null};}
 
-export function detectMicroMap(c:Candle[], balance=C.balance, spread=0):StrategySignal {
+function controlledChannel(ch:Candle[],d:Direction,a:number){
+  if(ch.length<C.analysis.microMap.minChannelBars) return false;
+  const ranges=ch.map(x=>x.high-x.low);
+  const med=Math.max(median(ranges),1e-9);
+  const width=(Math.max(...ch.map(x=>x.high))-Math.min(...ch.map(x=>x.low)))/a;
+  const narrow=ranges.filter(x=>x<=Math.max(a*1.05,med*1.30)).length>=Math.max(3,ch.length-1);
+  const directionals=ch.filter(x=>candleDirection(x)===d).length;
+  const closes=d==='LONG'?ch.filter((x,i)=>i===0||x.close>=ch[i-1].close).length:ch.filter((x,i)=>i===0||x.close<=ch[i-1].close).length;
+  return width<=C.analysis.context.channelMaxWidthATR && narrow && directionals>=Math.ceil(ch.length*0.50) && closes>=Math.ceil(ch.length*0.60);
+}
+
+export function detectMicroMap(c:Candle[],balance=C.balance,spread=0,precomputedContext?:MarketContext):StrategySignal{
   if(c.length<C.analysis.minCandles) return invalid('Insufficient candles for Micro-MAP');
-  const end=c.length-1, s=summarizeStructure(c), phase=classifyMarketPhase(c), a=Math.max(atr(c,14),0.05), current=c[end];
-  if(phase==='RANGE') return {strategy:'MICROMAP',status:'INVALID',score:0,reason:'Market is in RANGE; Micro-MAP waits for a clean channel',reasons:['Range conditions detected','Micro-MAP is reserved for directional channel structure'],warnings:[],direction:null};
-  for(const d of ['LONG','SHORT'] as const){
-    for(let channelBars=C.analysis.microMap.maxChannelBars;channelBars>=C.analysis.microMap.minChannelBars;channelBars--){
-      const channelEnd=end-2, start=channelEnd-channelBars+1;
-      if(start<3) continue;
-      const ch=c.slice(start,channelEnd+1);
-      const ranges=ch.map(x=>x.high-x.low);
-      const tight=median(ranges)<=a*0.65 && Math.max(...ranges)<=a*1.05;
-      const directional=ch.filter(x=>candleDirection(x)===d).length;
-      const closesDirectional=d==='LONG' ? ch.filter((x,i)=>i===0||x.close>=ch[i-1].close).length : ch.filter((x,i)=>i===0||x.close<=ch[i-1].close).length;
-      if(!tight || directional<Math.max(3,channelBars-1) || closesDirectional<Math.max(2,channelBars-1)) continue;
+  const context=precomputedContext??buildContext(c);
+  const regime=context.regime;
+  if(regime.phase==='RANGE') return invalid('Market is RANGE; Micro-MAP waits for a directional channel',['EMA50/EMA60 are not showing a stable directional regime']);
+  if(regime.phase!=='CHANNEL' || !regime.m5Trend.trend || regime.m5Trend.trend==='NEUTRAL') return {strategy:'MICROMAP',status:'WATCH',score:55,reason:'Waiting for a directional channel under EMA50/EMA60',reasons:[`Phase=${regime.phase}`,`M5 EMA trend=${regime.m5Trend.trend}`],warnings:[],direction:regime.m5Trend.trend==='NEUTRAL'?null:regime.m5Trend.trend,regime};
 
-      const pull=c.slice(end-1, end);
-      if(!pull.length) continue;
-      const p=pull[0];
-      const channelExtreme=d==='LONG'?Math.min(...ch.map(x=>x.low)):Math.max(...ch.map(x=>x.high));
-      const holds=d==='LONG'?p.low>=channelExtreme:p.high<=channelExtreme;
-      if(!holds) continue;
-
-      const trigger=d==='LONG'?Math.max(p.high,ch.at(-1)!.high):Math.min(p.low,ch.at(-1)!.low);
-      const triggerDistance=d==='LONG'?trigger-current.close:current.close-trigger;
-      if(triggerDistance<0 || triggerDistance>a*C.analysis.microMap.maxTriggerDistanceATR) continue;
-      const triggerHit=d==='LONG'?current.close>trigger:current.close<trigger;
-      const confirmation=d==='LONG'
-        ?candleDirection(current)==='LONG' && bodyRatio(current)>=0.52 && closeLocation(current)>=0.72
-        :candleDirection(current)==='SHORT' && bodyRatio(current)>=0.52 && closeLocation(current)<=0.28;
-      if(!triggerHit || !confirmation){
-        return {
-          strategy:'MICROMAP',status:'WATCH',score:65+(s.bias===d?10:0),reason:'Strict Micro-MAP compression found; waiting for clean trigger',
-          reasons:[`${channelBars}-bar tight micro-channel`,`Controlled one-bar pullback`,`Trigger/confirmation pending`],warnings:['Micro-MAP remains the rarest, highest-RR setup'],direction:d,trigger,zone:null
-        };
-      }
-
-      const entry=current.close;
-      const structure=summarizeStructure(c.slice(0,-1),120);
-      const structuralStop=d==='LONG'?Math.min(...pull.map(x=>x.low),channelExtreme,structure.lastSwingLow??Infinity):Math.max(...pull.map(x=>x.high),channelExtreme,structure.lastSwingHigh??-Infinity);
-      const stop=structuralStop;
-      const stopDistance=d==='LONG'?entry-stop:stop-entry;
-      if(stopDistance<=0 || stopDistance>a*C.analysis.microMap.maxStopATR) return invalid('Micro-MAP stop is wider than the strict limit',['Micro-MAP requires tight geometry']);
-
-      // For Micro-MAP, the first directional leg is represented by the
-      // channel's breakout span. TP remains exactly Leg-1 minus spread.
-      const channelHigh=Math.max(...ch.map(x=>x.high));
-      const channelLow=Math.min(...ch.map(x=>x.low));
-      const leg1=Math.max(Math.abs(channelHigh-channelLow),Math.abs(trigger-channelExtreme));
-      const targetDistance=Math.max(leg1-Math.max(spread,0),0);
-      const targetRR=targetDistance/Math.max(stopDistance+spread,1e-9);
-      if(targetDistance<=0 || targetRR<C.analysis.microMap.minRR){
-        return {strategy:'MICROMAP',status:'WATCH',score:60,reason:'Micro-MAP setup exists but Leg-1 target is below the required 4R minimum',reasons:[`Micro Leg-1=${leg1.toFixed(4)}`,`Leg-1 minus spread=${targetDistance.toFixed(4)}`,`Projected RR=${targetRR.toFixed(2)}R`,`Minimum=${C.analysis.microMap.minRR.toFixed(2)}R`],warnings:['Micro-MAP target must remain Leg-1 length minus spread and projected RR must stay above 4R'],direction:d,entry,trigger,stop,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD'};
-      }
-
-      const confluence=assessEntryConfluence(c,entry);
-      // Micro-MAP remains single-stage: 0.5% risk and no X2.
-      const risk=buildRisk(d,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,targetRR,false);
-      const score=Math.min(100,70+(s.bias===d?12:0)+(s.breakout===d?8:0)+(phase==='CHANNEL'?8:0)+Math.min(confluence.score,10));
-      const reasons=[`${channelBars}-bar tight micro-channel`,`${channelBars-1}-bar directional compression`,'One-bar controlled pullback','Trigger breakout with strong confirmation',`Tight stop ${(stopDistance/a).toFixed(2)} ATR`,`Leg-1 target=${targetDistance.toFixed(4)} (${targetRR.toFixed(2)}R)`,'Target rule: Leg-1 length minus spread','Micro-MAP requires >4R; target remains Leg-1 minus spread',confluence.labels.length?`Price confluence: ${confluence.labels.join(', ')}`:'No major price-level confluence'];
-      if(!risk.tradable) return {strategy:'MICROMAP',status:'INVALID',score,reason:'Micro-MAP setup rejected by risk engine',reasons,warnings:risk.warnings,direction:d,entry,trigger,stop,risk,confluence,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD'};
-      return {strategy:'MICROMAP',status:'VALID',score,reason:'Strict Micro-MAP confirmed',reasons,warnings:[],direction:d,entry,entry2:null,trigger,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD'};
+  const d=regime.m5Trend.trend as Direction;
+  if(regime.m1Trend.trend!==d && regime.m1Trend.trend!== 'NEUTRAL') return {strategy:'MICROMAP',status:'WATCH',score:52,reason:'M1 EMA trend is counter to the M5 channel direction',reasons:[`M5=${d}`,`M1=${regime.m1Trend.trend}`],warnings:['Wait for M1 to align or return to neutral'],direction:d,regime};
+  const end=c.length-1,a=Math.max(atr(c,14),0.05);
+  for(let bars=C.analysis.microMap.maxChannelBars;bars>=C.analysis.microMap.minChannelBars;bars--){
+    const channelEnd=end-2,start=channelEnd-bars+1;
+    if(start<3) continue;
+    const ch=c.slice(start,channelEnd+1);
+    if(!controlledChannel(ch,d,a)) continue;
+    const pull=c.slice(channelEnd+1,end);
+    const current=c[end];
+    const pullExtreme=d==='LONG'?Math.min(...pull.map(x=>x.low),Math.min(...ch.map(x=>x.low))):Math.max(...pull.map(x=>x.high),Math.max(...ch.map(x=>x.high)));
+    const trigger=d==='LONG'?Math.max(...ch.map(x=>x.high)):Math.min(...ch.map(x=>x.low));
+    const triggered=d==='LONG'?current.close>trigger:current.close<trigger;
+    const confirmation=d==='LONG'?candleDirection(current)==='LONG'&&bodyRatio(current)>=C.analysis.confirmation.minBodyToRange&&closeLocation(current)>=C.analysis.confirmation.closeInDirection:candleDirection(current)==='SHORT'&&bodyRatio(current)>=C.analysis.confirmation.minBodyToRange&&closeLocation(current)<=1-C.analysis.confirmation.closeInDirection;
+    const fvg=nearestFVG(c,current.close,d,'M1',0.95);
+    if(!triggered || !confirmation){
+      return {strategy:'MICROMAP',status:'WATCH',score:62+(regime.m1Trend.trend===d?8:0)+(fvg?6:0),reason:'Directional Micro-MAP channel found; waiting for breakout confirmation',reasons:[`${bars}-bar compressed directional channel`,`M5 EMA trend=${d}`,`M1 EMA trend=${regime.m1Trend.trend}`,`Trigger=${triggered?'hit':'pending'}`,`Confirmation=${confirmation?'yes':'pending'}`,`Nearby FVG=${fvg?'yes':'no'}`],warnings:[],direction:d,trigger,zone:null,fvg,regime};
     }
+    const entry=current.close;
+    const stop=d==='LONG'?Math.min(pullExtreme,trigger)-Math.max(spread*2,0.03):Math.max(pullExtreme,trigger)+Math.max(spread*2,0.03);
+    const stopDistance=d==='LONG'?entry-stop:stop-entry;
+    if(stopDistance<=0 || stopDistance>a*C.analysis.microMap.maxStopATR) return {strategy:'MICROMAP',status:'WATCH',score:58,reason:'Micro-MAP stop geometry is too wide',reasons:[`Stop ${(stopDistance/a).toFixed(2)} ATR exceeds ${C.analysis.microMap.maxStopATR.toFixed(2)} ATR`],warnings:[],direction:d,entry,trigger,stop,fvg,regime};
+    const channelHigh=Math.max(...ch.map(x=>x.high)),channelLow=Math.min(...ch.map(x=>x.low));
+    const leg1=Math.max(Math.abs(channelHigh-channelLow),Math.abs(trigger-pullExtreme));
+    const targetDistance=Math.max(leg1-Math.max(spread,0),0);
+    const targetRR=targetDistance/Math.max(stopDistance+spread,1e-9);
+    if(targetDistance<=0 || targetRR<C.analysis.microMap.minRR || targetRR>C.analysis.microMap.maxRR){
+      return {strategy:'MICROMAP',status:'WATCH',score:58,reason:'Micro-MAP setup exists but target geometry is outside the configured RR band',reasons:[`Leg-1=${leg1.toFixed(4)}`,`Projected RR=${targetRR.toFixed(2)}R`,`Allowed=${C.analysis.microMap.minRR.toFixed(2)}-${C.analysis.microMap.maxRR.toFixed(2)}R`],warnings:[],direction:d,entry,trigger,stop,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD',fvg,regime};
+    }
+    const confluence=assessEntryConfluence(c,entry);
+    const liquidity=context.liquidity;
+    const liq=assessLiquidityConfluence(liquidity,entry,d,a);
+    const risk=buildRisk(d,entry,stop,balance,Math.min(C.riskPercent,C.maxRiskPercent),spread,targetRR,false);
+    if(!risk.tradable) return invalid('Micro-MAP setup rejected by risk engine',risk.warnings);
+    const score=Math.min(100,66+(regime.m1Trend.trend===d?8:0)+Math.min(10,confluence.score)+(fvg?6:0)+Math.min(8,liq.score));
+    return {strategy:'MICROMAP',status:'VALID',score,reason:'Micro-MAP confirmed: EMA-aligned channel breakout',reasons:[`${bars}-bar directional compression`,`M5 EMA50/60=${d}`,`M1 EMA50/60=${regime.m1Trend.trend}`,`Breakout above/below channel=${trigger}`,`FVG=${fvg?'present':'none'}`,`Liquidity/OB=${liq.labels.join(', ')||'none'}`,`Leg-1 target=${targetDistance.toFixed(4)} (${targetRR.toFixed(2)}R)`],warnings:[],direction:d,entry,entry2:null,trigger,stop,tp1:risk.takeProfit??null,tp2:risk.takeProfit??null,risk,confluence,targetLegSize:leg1,targetDistance,targetRR,targetMode:'MICRO_LEG1_MINUS_SPREAD',fvg,liquidityScore:liq.score,liquidityLabels:liq.labels,liquiditySweep:liq.sweep,orderBlock:liq.orderBlock?{...liq.orderBlock,source:'LIQUIDITY_CONTEXT'}:null,volumeProfileStatus:liquidity.volumeProfile.status,regime};
   }
-  return invalid('No qualifying strict Micro-MAP pattern',['Micro-MAP is intentionally rare and requires tight geometry']);
+  return invalid('No qualifying directional Micro-MAP channel',['Requires EMA-aligned M5 direction, compressed structure and confirmed breakout']);
 }

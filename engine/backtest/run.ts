@@ -58,7 +58,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   const dailyTrades=new Map<string,number>();
   const rejectionCounts=new Map<string,number>();
   const stats=new Map<StrategyName,BacktestStrategyStats>([['SP2L',emptyStats('SP2L')],['PRO_BTB',emptyStats('PRO_BTB')],['MICROMAP',emptyStats('MICROMAP')]]);
-  const dailySeries=(input.dailyCandles??[]).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
+  const dailySeries=(input.dailyCandles?.length?input.dailyCandles:resample(candles,1440)).slice().sort((a,b)=>new Date(a.time).getTime()-new Date(b.time).getTime());
   const dailyPACache=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
   const getDailyPriceActionForDay=(dayKey:string)=>{
     const cached=dailyPACache.get(dayKey);
@@ -76,11 +76,18 @@ export function runBacktest(input:BacktestInput):BacktestResult {
   let dailyTrendBlockedCandles=0,dailyTrendPrecheckCount=0;
   const dailyPAStates=new Map<string,ReturnType<typeof assessDailyPriceAction>>();
   let liquidityContextStats={deepAnalyses:0,withSweep:0,withOrderBlock:0,withLiquidityPoolNear:0,volumeProfileAvailable:0};
-
   const executionLiquidityRequired=C.analysis.priceAction.requireLiquidityOrOrderBlock;
-let lastSelectedStrategy:StrategyName|null=null;
-let lastExecutionStrategy:StrategyName|null=null;
-let lastSelectedHasDirectionMatchedEvidence=false;
+  let lastSelectedStrategy:StrategyName|null=null;
+  let lastExecutionStrategy:StrategyName|null=null;
+  let lastSelectedHasDirectionMatchedEvidence=false;
+  let liquiditySelectedCount=0;
+  let liquidityExecutedCount=0;
+  let liquidityRejectedCount=0;
+  const regimeCounts={SPIKE:0,CHANNEL:0,RANGE:0,TRANSITION:0,UNCLEAR:0};
+  let totalSignalOpportunityCount=0;
+  let totalValidSignalCount=0;
+  let totalSelectedOpportunityCount=0;
+
   const addRejection=(reason:string)=>rejectionCounts.set(reason,(rejectionCounts.get(reason)||0)+1);
   const addOpportunity=(o:BacktestOpportunity)=>{
     opportunities.push(o);
@@ -227,17 +234,18 @@ let lastSelectedHasDirectionMatchedEvidence=false;
     // take-profit-count limit; the remaining daily safety control is risk.
     if((cfg.maxTradesPerDay>0 && todayTrades>=cfg.maxTradesPerDay) || used>=cfg.dailyRiskLimitPercent-1e-9 || balance<=0) continue;
 
-    // Daily direction is decided by price action, not by Daily swing labels.
-    // The Daily H/L structure remains available for execution/levels only.
+    // Daily price action supplies the global directional regime. A temporary
+    // daily slowdown (entryReady=false) is not a hard veto; M5/M1 EMA alignment
+    // and the market-cycle engine decide whether a new local entry is allowed.
     dailyTrendPrecheckCount++;
     const dailyPA=getDailyPriceActionForDay(currentDay);
-    if(C.analysis.spike.requireDailyTrend && (!dailyPA.confirmed || dailyPA.entryReady === false || dailyPA.bias==='NEUTRAL' || dailyPA.correction)){
+    if(C.analysis.spike.requireDailyTrend && (!dailyPA.confirmed || dailyPA.bias==='NEUTRAL' || dailyPA.correction)){
       dailyTrendBlockedCandles++;
-      addRejection(`Daily price action is ${dailyPA.state}; ${dailyPA.reason}`);
+      addRejection(`Daily global bias unavailable or corrective: ${dailyPA.state}; ${dailyPA.reason}`);
       continue;
     }
 
-    const gate=fastGate(candles.slice(Math.max(0,i-9),i+1));
+    const gate=fastGate(candles.slice(Math.max(0,i+1-360),i+1));
     let signal;
     if(gate.deepAnalysis){
       deepAnalysisCount++;
@@ -270,6 +278,9 @@ let lastSelectedHasDirectionMatchedEvidence=false;
     }
     const chosen=signal.selection;
     const chosenCandidate=chosen?.strategy ? signal.candidates.find(x=>x.strategy===chosen.strategy) : undefined;
+    if(signal.context?.phase && signal.context.phase in regimeCounts) regimeCounts[signal.context.phase as keyof typeof regimeCounts]++;
+    totalSignalOpportunityCount+=signal.signals.filter(x=>(x.status==='VALID'||x.status==='WATCH')&&x.direction!=null).length;
+    totalValidSignalCount+=signal.signals.filter(x=>x.status==='VALID'&&x.direction!=null).length;
     const hasRequiredLiquidityOrOrderBlock=(candidate:NonNullable<typeof chosenCandidate>) =>
       candidate.orderBlock?.direction === candidate.direction ||
       candidate.liquidityLabels.some(label =>
@@ -277,27 +288,30 @@ let lastSelectedHasDirectionMatchedEvidence=false;
       );
     const chosenHasLiquidityOrOrderBlock=!!chosenCandidate && hasRequiredLiquidityOrOrderBlock(chosenCandidate);
     const executionChosen=(chosen && (!executionLiquidityRequired || chosenHasLiquidityOrOrderBlock)) ? chosen : null;
+    if(chosen){
+      liquiditySelectedCount++;
+      lastSelectedStrategy=chosen.strategy;
+      lastSelectedHasDirectionMatchedEvidence=chosenHasLiquidityOrOrderBlock;
+      totalSelectedOpportunityCount++;
+    }
     const executionGateRejection=chosen && executionLiquidityRequired && !chosenHasLiquidityOrOrderBlock
       ? 'Liquidity/Order Block required for execution: no qualifying nearby liquidity or order block'
       : null;
 
-    lastSelectedStrategy=chosen?.strategy??null;
-lastExecutionStrategy=executionChosen?.strategy??null;
-lastSelectedHasDirectionMatchedEvidence=chosenHasLiquidityOrOrderBlock;
-    
     for(const s of signal.signals){
       const candidate=signal.candidates.find(x=>x.strategy===s.strategy);
       let action:'EXECUTE'|'WATCH'|'REJECT'='WATCH';
       let rejectionReason:string|null=null;
       if(s.status==='VALID' && candidate){
         if(chosen?.strategy===s.strategy){
-          if(executionGateRejection){action='REJECT';rejectionReason=executionGateRejection;}
+          if(executionGateRejection){action='REJECT';rejectionReason=executionGateRejection;liquidityRejectedCount++;}
           else action='EXECUTE';
         }
         else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 filter blocks the strategy direction';}
         else if(candidate.dailyRelation!=='CONFIRM'){action='REJECT';rejectionReason=`Daily price action does not confirm ${candidate.direction}: ${signal.context.dailyPriceAction.state}`;}
         else if(executionLiquidityRequired && !hasRequiredLiquidityOrOrderBlock(candidate)){
           action='REJECT';
+          liquidityRejectedCount++;
           rejectionReason='Liquidity/Order Block required for execution: no qualifying nearby direction-matched liquidity or order block';
         }
         else if(signal.context.phase==='RANGE'){action='REJECT';rejectionReason='Market phase is RANGE; no entry in range interior';}
@@ -393,6 +407,8 @@ lastSelectedHasDirectionMatchedEvidence=chosenHasLiquidityOrOrderBlock;
     dailyTrades.set(currentDay,(dailyTrades.get(currentDay)||0)+1);
     lastTradeIndex.set(executionChosen.strategy,i);
     stats.get(executionChosen.strategy)!.executed++;
+    liquidityExecutedCount++;
+    lastExecutionStrategy=executionChosen.strategy;
   }
 
   if(open){
@@ -467,8 +483,16 @@ lastSelectedHasDirectionMatchedEvidence=chosenHasLiquidityOrOrderBlock;
     opportunityStats:[...stats.values()],
     rejectionReasons:[...rejectionCounts.entries()].sort((a,b)=>b[1]-a[1]).map(([reason,count])=>({reason,count})),
     performance:{mode:'TWO_STAGE_FAST',scannedCandles:candles.length,deepAnalysisCount,fastGateSkipCount,deepAnalysisPct:Number((deepAnalysisCount/Math.max(candles.length,1)*100).toFixed(2)),dailyTrendBlockedCandles,dailyTrendPrecheckCount,dailyPAByDay:[...dailyPAStates.entries()].map(([day,state])=>({day,state:state.state,bias:state.bias,confirmed:state.confirmed,entryReady:state.entryReady,correction:state.correction,score:state.score,pressure:state.pressure,recentImpulse:state.recentImpulse,candleQuality:state.candleQuality,reason:state.reason})),
-      liquidityDiagnostics:liquidityContextStats},
-    engineRevision:'PATCH43_LIQUIDITY_HARD_GATE',
-liquidityGate:{required:executionLiquidityRequired,selectedStrategy:lastSelectedStrategy,executionStrategy:lastExecutionStrategy,selectedHasDirectionMatchedEvidence:lastSelectedHasDirectionMatchedEvidence},    dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
+      liquidityDiagnostics:liquidityContextStats,
+      opportunityTargetPerDay:C.analysis.opportunityTargetPerDay,
+      signalOpportunitiesPerDay:Number((totalSignalOpportunityCount/Math.max(dataDays.length,1)).toFixed(2)),
+      validSignalsPerDay:Number((totalValidSignalCount/Math.max(dataDays.length,1)).toFixed(2)),
+      selectedOpportunitiesPerDay:Number((totalSelectedOpportunityCount/Math.max(dataDays.length,1)).toFixed(2)),
+      executedTradesPerDay:Number((trades.length/Math.max(dataDays.length,1)).toFixed(2)),
+      opportunityTargetCoveragePct:Number((Math.min(100,(totalSignalOpportunityCount/Math.max(dataDays.length,1))/Math.max(C.analysis.opportunityTargetPerDay,1)*100)).toFixed(2)),
+      regimeCounts},
+    engineRevision:'PATCH45_EMA_REGIME_FVG_SPIKE',
+    liquidityGate:{required:executionLiquidityRequired,selectedStrategy:lastSelectedStrategy,executionStrategy:lastExecutionStrategy,selectedHasDirectionMatchedEvidence:lastSelectedHasDirectionMatchedEvidence,selectedCount:liquiditySelectedCount,executedCount:liquidityExecutedCount,rejectedCount:liquidityRejectedCount},
+    dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
 }

@@ -5,6 +5,21 @@ export function range(c: Candle) { return Math.max(c.high - c.low, 1e-9); }
 export function bodyRatio(c: Candle) { return body(c) / range(c); }
 export function closeLocation(c: Candle) { return (c.close - c.low) / range(c); }
 export function candleDirection(c: Candle): Direction | null { return c.close > c.open ? 'LONG' : c.close < c.open ? 'SHORT' : null; }
+export function ema(candles: Candle[], n=14) {
+  if (!candles.length) return 0;
+  const alpha=2/(n+1);
+  let value=candles[0].close;
+  for(let i=1;i<candles.length;i++) value=alpha*candles[i].close+(1-alpha)*value;
+  return value;
+}
+export function emaSeries(candles: Candle[], n=14) {
+  if (!candles.length) return [];
+  const alpha=2/(n+1);
+  const out=[candles[0].close];
+  for(let i=1;i<candles.length;i++) out.push(alpha*candles[i].close+(1-alpha)*out[i-1]);
+  return out;
+}
+
 export function median(values: number[]) {
   if (!values.length) return 0;
   const xs = [...values].sort((a,b)=>a-b);

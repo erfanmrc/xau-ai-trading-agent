@@ -30,6 +30,74 @@ export type MotherMove = {
   strength: number;
 };
 
+
+export type FVGZone = {
+  direction: Direction;
+  low: number;
+  high: number;
+  timeframe: 'M1'|'M5'|'M15';
+  startIndex: number;
+  endIndex: number;
+  size: number;
+  sizeATR: number;
+  strength: number;
+};
+
+export type LocalTrend = {
+  timeframe: 'M1'|'M5'|'M15';
+  trend: MarketBias;
+  ema50: number|null;
+  ema60: number|null;
+  separationATR: number;
+  slope50ATR: number;
+  slope60ATR: number;
+  closeSide: MarketBias;
+  sideRatio: number;
+  score: number;
+};
+
+export type SpikeEvent = {
+  timeframe: 'M1'|'M5'|'M15';
+  direction: Direction;
+  startIndex: number;
+  endIndex: number;
+  startTime: string;
+  endTime: string;
+  candleCount: number;
+  displacementATR: number;
+  efficiency: number;
+  pressure: number;
+  bodyQuality: number;
+  closeProgress: number;
+  breakoutLevel: number;
+  extreme: number;
+  legSize: number;
+  fvg: FVGZone|null;
+  imbalanceScore: number;
+  strength: number;
+};
+
+export type MarketRegime = {
+  phase: MarketPhase;
+  m1Trend: LocalTrend;
+  m5Trend: LocalTrend;
+  globalBias: MarketBias;
+  executionAligned: boolean;
+  alignmentScore: number;
+  score: number;
+  spike: SpikeEvent|null;
+  m1Spike: SpikeEvent|null;
+  m5Spike: SpikeEvent|null;
+  m1Fvgs: FVGZone[];
+  m5Fvgs: FVGZone[];
+  m15Fvgs: FVGZone[];
+  channel: {
+    compressed: boolean;
+    rangeCompressionScore: number;
+    sourceSpikeEndTime: string|null;
+  };
+};
+
 export type EconomicEvent = {
   time: string;
   currency?: string;
@@ -158,6 +226,8 @@ export type StrategySignal = {
   confluence?: EntryConfluence | null;
   liquidityScore?: number;
   liquidityLabels?: string[];
+  fvg?: FVGZone|null;
+  regime?: MarketRegime;
   liquiditySweep?: LiquiditySweep | null;
   orderBlock?: {low:number;high:number;direction:Direction;timeframe:string;strength:number;source:string}|null;
   volumeProfileStatus?: VolumeProfile['status'];
@@ -187,6 +257,9 @@ export type ImportantLevels = {
   sma60H1:number|null;
   ema20M5:number|null;
   ema50M5:number|null;
+  ema60M5:number|null;
+  ema50M1:number|null;
+  ema60M1:number|null;
   ema20M15:number|null;
   m15SwingHigh:number|null;
   m15SwingLow:number|null;
@@ -221,6 +294,7 @@ export type MarketContext = {
   weeklyBias: MarketBias;
   dailyPriceAction: DailyPriceAction;
   phase: MarketPhase;
+  regime: MarketRegime;
   motherMove: MotherMove | null;
   alignmentScore: number;
   aligned: boolean;

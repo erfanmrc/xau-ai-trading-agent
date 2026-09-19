@@ -28,7 +28,7 @@ export function buildImportantLevels(c:Candle[]):ImportantLevels{
     round5:0,round10:0,previousDayHigh:null,previousDayLow:null,previousDayMid:null,
     sessionHigh:null,sessionLow:null,sessionMid:null,rangeHigh:null,rangeLow:null,rangeMid:null,
     sma50M5:null,sma60M5:null,sma50M15:null,sma60M15:null,sma50H1:null,sma60H1:null,
-    ema20M5:null,ema50M5:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null,
+    ema20M5:null,ema50M5:null,ema60M5:null,ema50M1:null,ema60M1:null,ema20M15:null,m15SwingHigh:null,m15SwingLow:null,
     m5SwingHigh:null,m5SwingLow:null,h1SwingHigh:null,h1SwingLow:null,m1SwingHigh:null,m1SwingLow:null
   };
   const currentDay=dayKey(c.at(-1)!.time);
@@ -56,7 +56,7 @@ export function buildImportantLevels(c:Candle[]):ImportantLevels{
     sessionHigh:sHi,sessionLow:sLo,sessionMid:sHi!==null&&sLo!==null?(sHi+sLo)/2:null,
     rangeHigh:rHi,rangeLow:rLo,rangeMid:rHi!==null&&rLo!==null?(rHi+rLo)/2:null,
     sma50M5:sma(m5,50),sma60M5:sma(m5,60),sma50M15:sma(m15,50),sma60M15:sma(m15,60),
-    sma50H1:sma(h1,50),sma60H1:sma(h1,60),ema20M5:ema(m5,20),ema50M5:ema(m5,50),ema20M15:ema(m15,20),
+    sma50H1:sma(h1,50),sma60H1:sma(h1,60),ema20M5:ema(m5,20),ema50M5:ema(m5,50),ema60M5:ema(m5,60),ema50M1:ema(c,50),ema60M1:ema(c,60),ema20M15:ema(m15,20),
     m15SwingHigh:m15s.lastSwingHigh,m15SwingLow:m15s.lastSwingLow,
     m5SwingHigh:m5s.lastSwingHigh,m5SwingLow:m5s.lastSwingLow,
     h1SwingHigh:h1s.lastSwingHigh,h1SwingLow:h1s.lastSwingLow,

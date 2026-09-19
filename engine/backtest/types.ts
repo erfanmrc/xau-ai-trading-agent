@@ -88,7 +88,7 @@ export type BacktestTrade={
   outcome:'TP'|'SL'|'TREND_EXIT'|'EOD';
   diagnostics?: { x2TriggeredAtR:number|null; mfeR:number; setupScore:number; marketPhase?:string; dailyBias?:string; weeklyBias?:string; exitReason?:'STOP'|'TARGET'|'EOD'; targetReached?:boolean; plannedRR?:number; leg1Size?:number; dailyTrendState?:string; };
 };
-export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number;dailyPAByDay?:{day:string;state:string;bias:string;confirmed:boolean;entryReady?:boolean;correction:boolean;score:number;pressure:number;recentImpulse:number;candleQuality:number;reason:string}[];liquidityDiagnostics?:{deepAnalyses:number;withSweep:number;withOrderBlock:number;withLiquidityPoolNear:number;volumeProfileAvailable:number}};
+export type BacktestPerformance={mode:'TWO_STAGE_FAST';scannedCandles:number;deepAnalysisCount:number;fastGateSkipCount:number;deepAnalysisPct:number;dailyTrendBlockedCandles:number;dailyTrendPrecheckCount:number;dailyPAByDay?:{day:string;state:string;bias:string;confirmed:boolean;entryReady?:boolean;correction:boolean;score:number;pressure:number;recentImpulse:number;candleQuality:number;reason:string}[];liquidityDiagnostics?:{deepAnalyses:number;withSweep:number;withOrderBlock:number;withLiquidityPoolNear:number;volumeProfileAvailable:number};opportunityTargetPerDay:number;signalOpportunitiesPerDay:number;validSignalsPerDay:number;selectedOpportunitiesPerDay:number;executedTradesPerDay:number;opportunityTargetCoveragePct:number;regimeCounts:{SPIKE:number;CHANNEL:number;RANGE:number;TRANSITION:number;UNCLEAR:number}};
 export type BacktestResult={
   config:BacktestConfig;
   initialBalance:number;
@@ -127,6 +127,9 @@ export type BacktestResult={
     selectedStrategy:StrategyName|null;
     executionStrategy:StrategyName|null;
     selectedHasDirectionMatchedEvidence:boolean;
+    selectedCount:number;
+    executedCount:number;
+    rejectedCount:number;
   };
   dataCoverage:{start:string|null;end:string|null;calendarDays:number;tradingDaysWithData:number;candles:number};
 };
