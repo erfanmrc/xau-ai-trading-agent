@@ -1,6 +1,6 @@
-# XAU AI Trading Agent — Patch 46
+# XAU AI Trading Agent — Patch 47
 
-Patch 46 retains the Patch 45 market-regime-first architecture and fixes the 3-candle Spike detector boundary so the stated minimum is enforced.
+Patch 47 hardens entry quality after reviewing the 20,000-candle backtest: SP2L is now restricted to fresh Spike-phase pullbacks, entry location is directional, pool-only liquidity no longer qualifies as execution evidence, H1 opposition is a hard veto, and automatic X2 is disabled by default.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ Patch 46 retains the Patch 45 market-regime-first architecture and fixes the 3-c
    - directional pressure / imbalance
 5. SP2L, PRO_BTB, and Micro-MAP evaluate entries only after the regime layer.
 6. FVGs and displacement order blocks are structural context. Liquidity remains a price-action proxy; it is not a live DOM/order-book feed.
-7. Execution requires Daily global direction + M5 alignment + M1 alignment or neutrality, plus the configured liquidity/order-block hard gate.
+7. Execution requires Daily global direction + M5 alignment + M1 alignment or neutrality, a non-opposing H1 structure, directional entry location, and the configured directional liquidity/order-block gate.
 
 ## Spike / FVG safety
 
@@ -22,7 +22,7 @@ FVG detection is strictly causal: a Spike can only use an FVG whose right-hand c
 
 ## Strategy roles
 
-- `SP2L`: Spike → controlled pullback → FVG/OB interaction → Leg-2 continuation.
+- `SP2L`: fresh Spike → controlled pullback → real breakout preservation → FVG/OB interaction → Leg-2 continuation; stale/channel entries are blocked.
 - `PRO_BTB`: M5/M15 Spike-zone breakout → real departure → retest → M1 rejection.
 - `MICROMAP`: directional M5 channel → compressed local structure → breakout trigger.
 
@@ -40,17 +40,18 @@ The ~10/day target is treated as an opportunity-rate target, not a forced trade-
 
 ## Performance / build safety
 
-Patch 46 shares one `MarketContext` across all three strategy engines during Unified Decision evaluation. Spike/FVG scans are precomputed once per call where possible, reducing repeated work during backtests.
+Patch 47 shares one `MarketContext` across all three strategy engines during Unified Decision evaluation. Spike/FVG scans are precomputed once per call where possible, reducing repeated work during backtests.
 
 Core and full-project TypeScript checks were run in the development environment. A native Next.js production build could not be executed there because the environment could not complete dependency installation, so Vercel remains the authoritative final build check.
 
 ## Risk / execution compatibility
 
-Existing risk behavior is preserved:
+Risk / execution rules for Patch 47:
 - 0.5% initial risk
-- approximately 1% combined X2 risk
-- daily risk budget
-- existing target geometry rules
-- existing trend/SL handling
+- automatic X2 disabled by default
+- daily risk budget retained
+- single-stage SP2L target geometry restricted to 1-2R
+- post-loss cooldown enabled
+- NEXT_OPEN fills rejected when execution drift exceeds the configured ATR limit
 
-`engineRevision` for this release is `PATCH46_EMA_REGIME_FVG_SPIKE`.
+`engineRevision` for this release is `PATCH47_ENTRY_QUALITY_X2_OFF_FRESH_SPIKE`.

@@ -40,6 +40,8 @@ export type BacktestOpportunity={
   dailyTrendLowLabel?:'HL'|'LL'|null;
   dailyTrendState?:'UPTREND'|'DOWNTREND'|'CORRECTION'|'RANGE'|'UNCLEAR';
   liquidityScore?:number;
+  locationScore?:number;
+  locationLabels?:string[];
   liquidityLabels?:string[];
   orderBlock?:{low:number;high:number;direction:Direction;timeframe:string;strength:number}|null;
   liquiditySweep?:{direction:Direction;side:'HIGH'|'LOW';level:number;time:string;strength:number;reclaimed:boolean}|null;

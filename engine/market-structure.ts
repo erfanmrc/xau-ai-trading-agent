@@ -286,7 +286,7 @@ function assessDailyPriceActionSnapshot(c:Candle[]): import('@/types/market').Da
     const state=balanced?'RANGE':'UNCLEAR';
     return {
       state,bias:'NEUTRAL',confirmed:false,entryReady:false,correction:false,
-      score:Number(dominantScore.toFixed(1)),
+      score:Number(Math.min(100,dominantScore).toFixed(1)),
       pressure:Number(recentPressure.toFixed(4)),
       recentImpulse:Number((recentPressure*med).toFixed(3)),
       candleQuality:Number(candleQuality.toFixed(3)),
@@ -315,7 +315,7 @@ function assessDailyPriceActionSnapshot(c:Candle[]): import('@/types/market').Da
     const newBias=dominant==='LONG'?'SHORT':'LONG' as 'LONG'|'SHORT';
     return {
       state:newBias==='LONG'?'UPTREND':'DOWNTREND',bias:newBias,confirmed:true,entryReady:true,correction:false,
-      score:Number(Math.max(opposingScore,dominantScore).toFixed(1)),
+      score:Number(Math.min(100,Math.max(opposingScore,dominantScore)).toFixed(1)),
       pressure:Number(recentPressure.toFixed(4)),
       recentImpulse:Number((recentPressure*med).toFixed(3)),
       candleQuality:Number(candleQuality.toFixed(3)),
@@ -326,7 +326,7 @@ function assessDailyPriceActionSnapshot(c:Candle[]): import('@/types/market').Da
   if(persistentCorrection){
     return {
       state:'CORRECTION',bias:dominant,confirmed:true,entryReady:false,correction:true,
-      score:Number(dominantScore.toFixed(1)),
+      score:Number(Math.min(100,dominantScore).toFixed(1)),
       pressure:Number(recentPressure.toFixed(4)),
       recentImpulse:Number((recentPressure*med).toFixed(3)),
       candleQuality:Number(candleQuality.toFixed(3)),
@@ -336,7 +336,7 @@ function assessDailyPriceActionSnapshot(c:Candle[]): import('@/types/market').Da
 
   return {
     state:dominant==='LONG'?'UPTREND':'DOWNTREND',bias:dominant,confirmed:true,entryReady:true,correction:false,
-    score:Number(dominantScore.toFixed(1)),
+    score:Number(Math.min(100,dominantScore).toFixed(1)),
     pressure:Number(recentPressure.toFixed(4)),
     recentImpulse:Number((recentPressure*med).toFixed(3)),
     candleQuality:Number(candleQuality.toFixed(3)),

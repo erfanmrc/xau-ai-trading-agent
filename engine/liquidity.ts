@@ -30,7 +30,7 @@ function poolPush(out:LiquidityPool[],candidate:LiquidityPool,tol:number){
 }
 
 function detectPools(c:Candle[],levels:ImportantLevels):LiquidityPool[]{
-  const src=c.slice(-360);
+  const src=(c.length>1?c.slice(0,-1):c).slice(-360);
   const out:LiquidityPool[]=[];
   const a=Math.max(atr(src,14),0.1),tol=priceTol(a);
   const m5=resample(src,5),m15=resample(src,15),h1=resample(src,60);

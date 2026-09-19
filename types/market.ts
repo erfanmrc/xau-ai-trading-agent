@@ -231,6 +231,8 @@ export type StrategySignal = {
   liquiditySweep?: LiquiditySweep | null;
   orderBlock?: {low:number;high:number;direction:Direction;timeframe:string;strength:number;source:string}|null;
   volumeProfileStatus?: VolumeProfile['status'];
+  locationScore?: number;
+  locationLabels?: string[];
   targetLegSize?: number | null;
   targetDistance?: number | null;
   targetRR?: number | null;

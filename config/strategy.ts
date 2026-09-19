@@ -14,7 +14,7 @@ export const STRATEGY_CONFIG = {
   twoStageMinRR:2,
   twoStageMaxRR:5,
   btbMinRR:2,
-  x2Enabled:true,
+  x2Enabled:false,
   x2VolumeMultiplier:2,
   x2CombinedRiskPercent:1,
   maxStopPercent:1.5,
@@ -31,7 +31,7 @@ export const STRATEGY_CONFIG = {
       minPressure:0.38,
       resetLookbackBars:3,
       minStartExpansionRatio:1.15,
-      maxAgeBars:18,
+      maxAgeBars:8,
       activeAgeBars:2,
       maxExtensionATR:5.5,
       maxStopATR:2.00,
@@ -57,7 +57,7 @@ export const STRATEGY_CONFIG = {
       m1SourceEnabled:false,m5Enabled:true,m15Enabled:true,targetRR:2.0,
       rangeEdgeToleranceATR:0.25,rejectRangeInterior:true
     },
-    execution:{minCooldownBars:0,minCooldownAfterLossBars:0,minFavorableRForX2:0.30},
+    execution:{minCooldownBars:0,minCooldownAfterLossBars:30,minFavorableRForX2:1.00,minEntryScore:72,maxEntryDriftATR:0.35},
     trendExit:{
       lookbackBars:20,minStrongCandles:2,minBodyToRange:0.55,minCloseLocation:0.65,breakSwingATR:0.05
     },
@@ -66,6 +66,6 @@ export const STRATEGY_CONFIG = {
       channelMaxWidthATR:4.5,channelAvgRangeATR:0.95,channelMedianRangeATR:1.05,channelOverlapRatio:0.55,
       rangeMaxWidthATR:2.8,rangeOverlapRatio:0.72,minRangeEmaCrosses:4
     },
-    priceAction:{locationMinScore:2,requireLiquidityOrOrderBlock:true,volumeProfileSoftContextOnly:true}
+    priceAction:{locationMinScore:2,requireLiquidityOrOrderBlock:true,volumeProfileSoftContextOnly:true,requireDirectionalLiquidityEvidence:true,requireSpikeFvgOrOrderBlock:true,requireH1NotOpposing:true,requireM15NotOpposing:false}
   }
 };

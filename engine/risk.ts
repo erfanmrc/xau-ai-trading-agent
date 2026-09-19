@@ -35,9 +35,10 @@ export function buildRisk(
   let x2Entry:number|undefined, x2LotSize:number|undefined, combined:number|undefined;
 
   if(enableX2){
-    // X2 is a deferred midpoint add-on. The intended combined risk is 1%:
-    // first leg ~0.5% + X2 additional ~0.5%, with spread included in both legs.
-    x2Entry=(entry+stop)/2;
+    // X2 is deliberately conservative: the optional add-on is only armed after
+    // favorable movement in the backtester, and its entry is at the original
+    // entry price rather than averaging down inside the stop zone.
+    x2Entry=entry;
     const combinedRiskMoney=balance*C.x2CombinedRiskPercent/100;
     const firstRiskMoney=lot*effectiveStop*C.contractSize;
     const additionalRiskMoney=Math.max(combinedRiskMoney-firstRiskMoney,0);

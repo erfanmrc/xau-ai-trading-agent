@@ -1,4 +1,5 @@
 {
-  "compilerOptions":{"target":"ES2022","module":"CommonJS","moduleResolution":"Node","strict":true,"esModuleInterop":true,"skipLibCheck":true,"baseUrl":".","paths":{"@/*":["./*"]},"outDir":"tsout"},
-  "include":["engine/**/*.ts","agents/**/*.ts","config/**/*.ts","types/**/*.ts","data/**/*.ts"]
+  "compilerOptions":{"target":"ES2020","lib":["esnext","dom"],"strict":true,"noEmit":true,"esModuleInterop":true,"module":"esnext","moduleResolution":"bundler","baseUrl":".","paths":{"@/*":["./*"]},"skipLibCheck":true},
+  "include":["types/**/*.ts","config/**/*.ts","engine/**/*.ts","agents/**/*.ts","data/**/*.ts","scripts/smoke.ts"],
+  "exclude":["app/**/*.ts","app/**/*.tsx"]
 }

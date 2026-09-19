@@ -5,6 +5,7 @@ import { detectProBTB } from '@/agents/pro-btb';
 import { detectMicroMap } from '@/agents/micromap';
 import { buildContext } from '@/engine/context';
 import { assessLiquidityConfluence } from '@/engine/liquidity';
+import { assessDirectionalLocation } from '@/engine/levels';
 import { STRATEGY_CONFIG as C } from '@/config/strategy';
 
 export type DecisionCandidate={
@@ -14,6 +15,7 @@ export type DecisionCandidate={
   phaseRelation:'PRIMARY'|'SUPPORTIVE'|'NEUTRAL'|'OPPOSE';
   confluenceScore:number; confluenceLabels:string[];
   liquidityScore:number; liquidityLabels:string[]; orderBlock:{low:number;high:number;direction:'LONG'|'SHORT';timeframe:string;strength:number}|null;
+  locationScore:number; locationLabels:string[]; locationOpposition:boolean;
   liquiditySweep:{direction:'LONG'|'SHORT';side:'HIGH'|'LOW';level:number;time:string;strength:number;reclaimed:boolean}|null;
   volumeProfileStatus:'AVAILABLE'|'UNAVAILABLE'; fvg?:ReturnType<typeof detectSP2L>['fvg']; reasons:string[];
 };
@@ -62,18 +64,27 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     const e=enrich(s,context);
     const a=Math.max(context.liquidity.atrReference,0.25);
     const liq=assessLiquidityConfluence(context.liquidity,s.entry!,s.direction!,a);
+    const location=assessDirectionalLocation(c,s.entry!,s.direction!,a);
     const hasFvg=s.fvg??null;
-    const fvgBonus=hasFvg?Math.min(8,Math.round(hasFvg.strength*0.08)):0;
-    const score=clamp(e.score+(s.confluence?.score??0)+Math.min(10,liq.score)+fvgBonus);
+    const fvgBonus=hasFvg?Math.min(5,Math.round(hasFvg.strength*0.05)):0;
+    const contextQuality=e.score*0.30;
+    const signalQuality=s.score*0.30;
+    const confluenceBonus=Math.min(6,(s.confluence?.score??0)/16*6);
+    const locationQuality=Math.max(0,Math.min(12,(location.score+12)/22*12));
+    const liquidityBonus=Math.min(7,liq.score*0.45);
+    const alignmentBonus=Math.min(5,context.regime.alignmentScore*0.05);
+    const rr=s.targetRR??0;
+    const rrQuality=rr>=1 && rr<=2 ? 10 : rr>=2 && rr<=3 ? 7 : 0;
+    const score=clamp(contextQuality+signalQuality+confluenceBonus+locationQuality+liquidityBonus+alignmentBonus+fvgBonus+rrQuality);
     return {
       strategy:s.strategy,direction:s.direction!,score,entry:s.entry!,stop:s.stop!,signalTime:c.at(-1)!.time,
       h1Filter:e.h1Filter,m15Relation:e.m15Relation,dailyRelation:e.dailyRelation,weeklyRelation:e.weeklyRelation,phaseRelation:e.phaseRelation,
       confluenceScore:s.confluence?.score??0,confluenceLabels:s.confluence?.labels??[],
       liquidityScore:liq.score,liquidityLabels:liq.labels,
       orderBlock:liq.orderBlock?{low:liq.orderBlock.low,high:liq.orderBlock.high,direction:liq.orderBlock.direction,timeframe:liq.orderBlock.timeframe,strength:liq.orderBlock.strength}:null,
-      liquiditySweep:liq.sweep,volumeProfileStatus:context.liquidity.volumeProfile.status,fvg:hasFvg,reasons:[
+      liquiditySweep:liq.sweep,volumeProfileStatus:context.liquidity.volumeProfile.status,locationScore:location.score,locationLabels:location.labels,locationOpposition:location.hardOpposition,fvg:hasFvg,reasons:[
         s.reason,`Market regime: ${context.phase}`,`Global bias: ${context.dailyBias}`,`M5 EMA50/60: ${context.regime.m5Trend.trend}`,`M1 EMA50/60: ${context.regime.m1Trend.trend}`,
-        `Execution alignment: ${context.regime.executionAligned?'YES':'NO'}`,`FVG: ${hasFvg?'present':'none'}`,`Liquidity/OB: ${liq.labels.join(', ')||'none'}`,`Daily PA entry-ready: ${context.dailyPriceAction.entryReady===false?'NO':'YES/UNSPECIFIED'}`
+        `Execution alignment: ${context.regime.executionAligned?'YES':'NO'}`,`FVG: ${hasFvg?'present':'none'}`,`Liquidity/OB: ${liq.labels.join(', ')||'none'}`,`Location: ${location.labels.join(', ')||'neutral'}`,`Daily PA entry-ready: ${context.dailyPriceAction.entryReady===false?'NO':'YES/UNSPECIFIED'}`
       ]
     };
   });
@@ -82,14 +93,17 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     const globalBias=context.dailyBias;
     if(globalBias==='NEUTRAL') return false;
     if(x.direction!==globalBias) return false;
-    if(!context.dailyPriceAction.confirmed || context.dailyPriceAction.correction) return false;
+    if(!context.dailyPriceAction.confirmed || context.dailyPriceAction.correction || !context.dailyPriceAction.entryReady) return false;
     if(!context.regime.executionAligned) return false;
     if(context.phase==='RANGE') return false;
     if(x.phaseRelation==='OPPOSE') return false;
-    if(C.analysis.priceAction.requireLiquidityOrOrderBlock){
-      const hasRequired=x.orderBlock?.direction===x.direction || x.liquidityLabels.some(label=>label.startsWith(`${x.direction}_`)&&label.includes('LIQUIDITY'));
-      if(!hasRequired) return false;
-    }
+    if(C.analysis.priceAction.requireH1NotOpposing && x.h1Filter==='BLOCK') return false;
+    if(C.analysis.priceAction.requireM15NotOpposing && x.m15Relation==='OPPOSE') return false;
+    if(x.score<C.analysis.execution.minEntryScore) return false;
+    const hasDirectionalEvidence=x.orderBlock?.direction===x.direction || x.liquiditySweep?.direction===x.direction;
+    if(C.analysis.priceAction.requireDirectionalLiquidityEvidence && !hasDirectionalEvidence) return false;
+    if(x.locationOpposition) return false;
+    if(x.locationScore<C.analysis.priceAction.locationMinScore) return false;
     return true;
   });
 
@@ -111,7 +125,7 @@ export function analyzeUnified(c:Candle[],balance=2000,spread=0,dailyCandles?:Ca
     symbol:'XAUUSD',timestamp:c.at(-1)?.time??new Date().toISOString(),context,signals,candidates,
     selection:selection?{strategy:selection.strategy,direction:selection.direction,score:selection.score}:null,
     consensus:{direction,validCount:valid.length,alignedCount:eligible.length,eligibleCount:eligible.length,mode,reason},
-    message:['XAU AI Trading Agent',`Global Bias: ${context.dailyBias}`,`Market Regime: ${context.phase}`,`M5 EMA: ${context.regime.m5Trend.trend} | M1 EMA: ${context.regime.m1Trend.trend}`,`EMA/Global alignment: ${context.regime.executionAligned?'YES':'NO'}`,`Spike: ${context.regime.spike?`${context.regime.spike.direction} ${context.regime.spike.candleCount} candles | ${context.regime.spike.displacementATR.toFixed(2)} ATR | FVG ${context.regime.spike.fvg?'YES':'NO'}`:'NONE'}`,`Daily PA: ${context.dailyPriceAction.state} / confirmed=${context.dailyPriceAction.confirmed?'YES':'NO'} / entryReady=${context.dailyPriceAction.entryReady===false?'NO':'YES/UNSPECIFIED'}`,`Liquidity: score=${context.liquidity.executionScore} | ${context.liquidity.executionLabels.join(', ')||'none'} | VP=${context.liquidity.volumeProfile.status}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates=${candidates.length}`,`Eligible candidates=${eligible.length}`,`Selected=${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus=${mode}${direction?` ${direction}`:''}`,`Reason=${reason}`,`Economic=${context.economic.status}/${context.economic.risk}/${context.economic.bias}`].join('\n')
+    message:['XAU AI Trading Agent',`Global Bias: ${context.dailyBias}`,`Market Regime: ${context.phase}`,`M5 EMA: ${context.regime.m5Trend.trend} | M1 EMA: ${context.regime.m1Trend.trend}`,`EMA/Global alignment: ${context.regime.executionAligned?'YES':'NO'}`,`Spike: ${context.regime.spike?`${context.regime.spike.direction} ${context.regime.spike.candleCount} candles | ${context.regime.spike.displacementATR.toFixed(2)} ATR | FVG ${context.regime.spike.fvg?'YES':'NO'}`:'NONE'}`,`Daily PA: ${context.dailyPriceAction.state} / confirmed=${context.dailyPriceAction.confirmed?'YES':'NO'} / entryReady=${context.dailyPriceAction.entryReady===false?'NO':'YES/UNSPECIFIED'}`,`Liquidity: score=${context.liquidity.executionScore} | ${context.liquidity.executionLabels.join(', ')||'none'} | VP=${context.liquidity.volumeProfile.status}`,...signals.map(s=>`${s.strategy}: ${s.status}${s.direction?` ${s.direction}`:''} score=${s.score}`),`Valid candidates=${candidates.length}`,`Eligible candidates=${eligible.length}`,`Selected=${selection?`${selection.strategy} ${selection.direction} score=${selection.score}`:'NONE'}`,`Consensus=${mode}${direction?` ${direction}`:''}`,`Reason=${reason}`,`Selected location: ${selection?selection.strategy+' '+selection.direction:'NONE'}`,`Economic=${context.economic.status}/${context.economic.risk}/${context.economic.bias}`].join('\n')
   };
 }
 

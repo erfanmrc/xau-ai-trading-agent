@@ -16,7 +16,7 @@ const DEFAULTS:BacktestConfig={
   spread:0.05,
   startIndex:60,
   execution:'NEXT_OPEN',
-  allowX2:true,
+  allowX2:C.x2Enabled,
   cooldownBars:C.analysis.execution.minCooldownBars,
   cooldownAfterLossBars:C.analysis.execution.minCooldownAfterLossBars,
   analysisWindowBars:360,
@@ -155,7 +155,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       open.favorableMove=Math.max(open.favorableMove,closeFavorable);
       const firstStopDistance=pipsRisk(open.entry,open.stop,open.direction);
       const firstRiskDistance=firstStopDistance+Math.max(cfg.spread,0);
-      const favorableThreshold=Math.max(cfg.spread*2,firstStopDistance*C.analysis.execution.minFavorableRForX2);
+      const favorableThreshold=Math.max(cfg.spread*2,firstRiskDistance*C.analysis.execution.minFavorableRForX2);
       const intrabarMfe=long?Math.max(0,c.high-open.entry):Math.max(0,open.entry-c.low);
       open.mfeR=Math.max(open.mfeR,intrabarMfe/Math.max(firstRiskDistance,1e-9));
       const x2CanActivate=i>open.entryBar && open.favorableMove>=favorableThreshold;
@@ -283,9 +283,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     totalValidSignalCount+=signal.signals.filter(x=>x.status==='VALID'&&x.direction!=null).length;
     const hasRequiredLiquidityOrOrderBlock=(candidate:NonNullable<typeof chosenCandidate>) =>
       candidate.orderBlock?.direction === candidate.direction ||
-      candidate.liquidityLabels.some(label =>
-        label.includes('LIQUIDITY') && label.startsWith(`${candidate.direction}_`)
-      );
+      candidate.liquiditySweep?.direction === candidate.direction;
     const chosenHasLiquidityOrOrderBlock=!!chosenCandidate && hasRequiredLiquidityOrOrderBlock(chosenCandidate);
     const executionChosen=(chosen && (!executionLiquidityRequired || chosenHasLiquidityOrOrderBlock)) ? chosen : null;
     if(chosen){
@@ -295,7 +293,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       totalSelectedOpportunityCount++;
     }
     const executionGateRejection=chosen && executionLiquidityRequired && !chosenHasLiquidityOrOrderBlock
-      ? 'Liquidity/Order Block required for execution: no qualifying nearby liquidity or order block'
+      ? 'Directional Liquidity/Order Block required for execution: no direction-matched sweep or order block'
       : null;
 
     for(const s of signal.signals){
@@ -307,12 +305,12 @@ export function runBacktest(input:BacktestInput):BacktestResult {
           if(executionGateRejection){action='REJECT';rejectionReason=executionGateRejection;liquidityRejectedCount++;}
           else action='EXECUTE';
         }
-        else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 filter blocks the strategy direction';}
+        else if(candidate.h1Filter==='BLOCK'){action='REJECT';rejectionReason='H1 structure blocks the strategy direction';}
         else if(candidate.dailyRelation!=='CONFIRM'){action='REJECT';rejectionReason=`Daily price action does not confirm ${candidate.direction}: ${signal.context.dailyPriceAction.state}`;}
         else if(executionLiquidityRequired && !hasRequiredLiquidityOrOrderBlock(candidate)){
           action='REJECT';
           liquidityRejectedCount++;
-          rejectionReason='Liquidity/Order Block required for execution: no qualifying nearby direction-matched liquidity or order block';
+          rejectionReason='Directional Liquidity/Order Block required for execution: no direction-matched sweep or order block';
         }
         else if(signal.context.phase==='RANGE'){action='REJECT';rejectionReason='Market phase is RANGE; no entry in range interior';}
         else if(!executionChosen){action='REJECT';rejectionReason=executionGateRejection??'No eligible strategy selected after hard filters';}
@@ -327,6 +325,8 @@ export function runBacktest(input:BacktestInput):BacktestResult {
         dailyTrendLowLabel:signal.context.structure?.daily?.lowLabel??null,
         dailyTrendState:signal.context.dailyPriceAction?.state??'UNCLEAR',
         liquidityScore:candidate?.liquidityScore??signal.context.liquidity?.executionScore??0,
+        locationScore:candidate?.locationScore??0,
+        locationLabels:candidate?.locationLabels??[],
         liquidityLabels:candidate?.liquidityLabels??signal.context.liquidity?.executionLabels??[],
         orderBlock:candidate?.orderBlock??(signal.context.liquidity?.nearestOrderBlock??null),
         liquiditySweep:candidate?.liquiditySweep??(signal.context.liquidity?.activeSweep??null),
@@ -361,6 +361,12 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     }
 
     const entry=i+1<candles.length&&cfg.execution==='NEXT_OPEN'?candles[i+1].open:source.entry;
+    const signalEntry=source.entry;
+    const driftATR=Math.max(atr(candles.slice(Math.max(0,i-80),i+1),14),0.25);
+    if(cfg.execution==='NEXT_OPEN' && signalEntry!=null && Math.abs(entry-signalEntry)>driftATR*C.analysis.execution.maxEntryDriftATR){
+      markOpportunity(i,executionChosen.strategy,'REJECT',`Next-open execution drift ${(Math.abs(entry-signalEntry)/driftATR).toFixed(2)} ATR exceeds ${C.analysis.execution.maxEntryDriftATR.toFixed(2)} ATR`);
+      continue;
+    }
     const stop=source.stop;
     const entryRisk=pipsRisk(entry,stop,source.direction);
     if(entryRisk<=0){markOpportunity(i,executionChosen.strategy,'REJECT','Entry/stop geometry is invalid after execution-price adjustment');continue;}
@@ -370,13 +376,13 @@ export function runBacktest(input:BacktestInput):BacktestResult {
     const targetAllowed=stage==='SINGLE'
       ? plan.rr>=C.singleStageMinRR-1e-9 && plan.rr<=C.singleStageMaxRR+1e-9
       : stage==='X2'
-        ? plan.rr>=C.twoStageMinRR-1e-9 && plan.rr<=C.twoStageMaxRR+1e-9
+        ? cfg.allowX2 && plan.rr>=C.twoStageMinRR-1e-9 && plan.rr<=C.twoStageMaxRR+1e-9
         : executionChosen.strategy==='PRO_BTB'
           ? plan.rr>=C.btbMinRR-1e-9
           : executionChosen.strategy==='MICROMAP'
             ? plan.rr>=C.analysis.microMap.minRR-1e-9
             : false;
-    if(!targetAllowed){markOpportunity(i,executionChosen.strategy,'REJECT',`Leg-1 target RR ${plan.rr.toFixed(2)}R falls outside ${stage==='SINGLE'?'1-2R':stage==='X2'?'2-5R':stage==='OTHER'&&executionChosen.strategy==='MICROMAP'?'>4R':'BTB >=2R'} after execution-price adjustment`);continue;}
+    if(!targetAllowed){markOpportunity(i,executionChosen.strategy,'REJECT',`Leg-1 target RR ${plan.rr.toFixed(2)}R is not executable under the active target/risk policy (stage=${stage}, X2=${cfg.allowX2?'ON':'OFF'}) after execution-price adjustment`);continue;}
 
     const x2EnabledForTrade=cfg.allowX2 && executionChosen.strategy!=='MICROMAP' && stage!=='SINGLE';
     const liveRisk=buildRisk(source.direction,entry,stop,balance,C.riskPercent,cfg.spread,plan.rr,x2EnabledForTrade);
@@ -491,7 +497,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       executedTradesPerDay:Number((trades.length/Math.max(dataDays.length,1)).toFixed(2)),
       opportunityTargetCoveragePct:Number((Math.min(100,(totalSignalOpportunityCount/Math.max(dataDays.length,1))/Math.max(C.analysis.opportunityTargetPerDay,1)*100)).toFixed(2)),
       regimeCounts},
-    engineRevision:'PATCH46_EMA_REGIME_FVG_SPIKE',
+    engineRevision:'PATCH47_ENTRY_QUALITY_X2_OFF_FRESH_SPIKE',
     liquidityGate:{required:executionLiquidityRequired,selectedStrategy:lastSelectedStrategy,executionStrategy:lastExecutionStrategy,selectedHasDirectionMatchedEvidence:lastSelectedHasDirectionMatchedEvidence,selectedCount:liquiditySelectedCount,executedCount:liquidityExecutedCount,rejectedCount:liquidityRejectedCount},
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };
