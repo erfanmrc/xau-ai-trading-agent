@@ -491,7 +491,7 @@ export function runBacktest(input:BacktestInput):BacktestResult {
       executedTradesPerDay:Number((trades.length/Math.max(dataDays.length,1)).toFixed(2)),
       opportunityTargetCoveragePct:Number((Math.min(100,(totalSignalOpportunityCount/Math.max(dataDays.length,1))/Math.max(C.analysis.opportunityTargetPerDay,1)*100)).toFixed(2)),
       regimeCounts},
-    engineRevision:'PATCH45_EMA_REGIME_FVG_SPIKE',
+    engineRevision:'PATCH46_EMA_REGIME_FVG_SPIKE',
     liquidityGate:{required:executionLiquidityRequired,selectedStrategy:lastSelectedStrategy,executionStrategy:lastExecutionStrategy,selectedHasDirectionMatchedEvidence:lastSelectedHasDirectionMatchedEvidence,selectedCount:liquiditySelectedCount,executedCount:liquidityExecutedCount,rejectedCount:liquidityRejectedCount},
     dataCoverage:{start:candles[0]?.time??null,end:candles.at(-1)?.time??null,calendarDays:dataDays.length,tradingDaysWithData:dataDays.length,candles:candles.length}
   };

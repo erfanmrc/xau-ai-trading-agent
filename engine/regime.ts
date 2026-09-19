@@ -97,8 +97,7 @@ function detectSpikeEndingAt(c:Candle[],timeframe:'M1'|'M5'|'M15',end:number,fvg
   for(const d of ['LONG','SHORT'] as const){
     let start=end;
     const resetBodyThreshold=C.analysis.spike.minBodyQuality*0.80;
-    while(start>0 && end-start<C.analysis.spike.maxCandles-1 && candleDirection(c[start])===d && bodyRatio(c[start])>=resetBodyThreshold) start--;
-    start++;
+    while(start>0 && end-start<C.analysis.spike.maxCandles-1 && candleDirection(c[start-1])===d && bodyRatio(c[start-1])>=resetBodyThreshold) start--;
     const count=end-start+1;
     if(count<C.analysis.spike.minCandles) continue;
     if(!spikeStartIsDistinct(c,start,d)) continue;

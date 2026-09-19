@@ -1,6 +1,6 @@
-# XAU AI Trading Agent — Patch 45
+# XAU AI Trading Agent — Patch 46
 
-Patch 45 replaces the previous mother-spike-first flow with a market-regime-first architecture.
+Patch 46 retains the Patch 45 market-regime-first architecture and fixes the 3-candle Spike detector boundary so the stated minimum is enforced.
 
 ## Architecture
 
@@ -40,7 +40,7 @@ The ~10/day target is treated as an opportunity-rate target, not a forced trade-
 
 ## Performance / build safety
 
-Patch 45 shares one `MarketContext` across all three strategy engines during Unified Decision evaluation. Spike/FVG scans are precomputed once per call where possible, reducing repeated work during backtests.
+Patch 46 shares one `MarketContext` across all three strategy engines during Unified Decision evaluation. Spike/FVG scans are precomputed once per call where possible, reducing repeated work during backtests.
 
 Core and full-project TypeScript checks were run in the development environment. A native Next.js production build could not be executed there because the environment could not complete dependency installation, so Vercel remains the authoritative final build check.
 
@@ -53,4 +53,4 @@ Existing risk behavior is preserved:
 - existing target geometry rules
 - existing trend/SL handling
 
-`engineRevision` for this release is `PATCH45_EMA_REGIME_FVG_SPIKE`.
+`engineRevision` for this release is `PATCH46_EMA_REGIME_FVG_SPIKE`.

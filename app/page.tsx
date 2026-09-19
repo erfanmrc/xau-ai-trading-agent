@@ -1,6 +1,6 @@
 export default function Home(){
  return <main style={{maxWidth:980,margin:'0 auto',padding:32}}>
-  <h1>XAU AI Trading Agent — Patch 45</h1>
+  <h1>XAU AI Trading Agent — Patch 46</h1>
   <p>Market-regime-first architecture: GLOBAL BIAS → EMA50/EMA60 M1/M5 → SPIKE / CHANNEL / RANGE → strategy entry.</p>
   <p>Spike definition: minimum 3 directional candles + displacement + at least one causal FVG + directional pressure/imbalance. The old Mother Spike requirement is removed.</p>
   <p>Strategy roles: SP2L for Spike pullback/continuation, PRO_BTB for breakout-retest, and Micro-MAP for directional channel breakouts.</p>
